@@ -1338,11 +1338,14 @@ function renderSaldos(){
       var disp=linea-aPagar;
       var pctU=linea>0?Math.round(aPagar/linea*100):0;
       var pctCls=pctU>=100?'over':pctU>=80?'warn':'';
+      var deudaIniStat=advancedTC[m.nombre]
+        ? '<div class="saldo-stat" title="Deuda traída de meses anteriores. No cuenta como cargo del mes."><div class="saldo-stat-lbl">Deuda heredada</div>'+
+          '<input type="number" value="'+deudaIni+'" step="0.01" min="0" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'
+        : '';
       statsHtml=
         '<div class="saldo-stat"><div class="saldo-stat-lbl">Línea autorizada</div>'+
           '<input type="number" value="'+linea+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)"></div>'+
-        '<div class="saldo-stat" title="Deuda traída de meses anteriores. No cuenta como cargo del mes."><div class="saldo-stat-lbl">Deuda heredada</div>'+
-          '<input type="number" value="'+deudaIni+'" step="0.01" min="0" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'+
+        deudaIniStat+
         saldoStat('Cargos del mes',fmt(cargos),'red')+
         saldoStat('Abonos / pagos',fmt(abonos),'green')+
         saldoStat('Saldo a pagar',fmt(aPagar),aPagar>0?'red':'green')+
