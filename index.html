@@ -610,7 +610,8 @@ async function loadMesFromFirestore(){
       var maxId=200;
       var bump=function(o){ if(o && typeof o.id==='number' && o.id>=maxId) maxId=o.id+1; };
       var ingresos=(prev.data.ingresos||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
-      var egresos=(prev.data.egresos||[]).map(function(o){bump(o); var c=JSON.parse(JSON.stringify(o)); c.gastado=0; return c;});
+      var subsT=totSubsMes();
+      var egresos=(prev.data.egresos||[]).map(function(o){bump(o); var c=JSON.parse(JSON.stringify(o)); c.gastado=0; if(c.linkedToSubs) c.presup=subsT; return c;});
       var distribucion=(prev.data.distribucion||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
       // Calcular saldos finales del mes anterior y arrastrarlos como iniciales
       var prevMov={};
@@ -743,11 +744,12 @@ async function changeMes(){
   bitFilterCat='Todos'; bitFilterMP='Todos'; bitFilterTipo='Todos';
   syncStatus('saving');
   state = await loadMesFromFirestore();
+  var changed=syncLinkedEgresosToSubs();
   syncStatus('ok');
   if(lastLoadInherited){
     toast('Mes copiado de '+(lastInheritedFrom||'mes anterior'));
     save(true);
-  }
+  } else if(changed){ save(true); }
   renderAll();
 }
 window.changeMes = changeMes;
@@ -927,12 +929,20 @@ function renderEgresos(){
     var pct=e.presup>0?Math.round((e.gastado||0)/e.presup*100):0;
     var cls=pct>=100?'over':pct>=80?'warn':'';
     var destOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===e.dest?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
+    var linked=!!e.linkedToSubs;
+    var linkBtn='<button title="'+(linked?'Vinculado a Suscripciones — clic para desvincular':'Vincular presupuesto al total de Suscripciones')+'" onclick="toggleEgSubsLink('+e.id+')" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px;color:'+(linked?'var(--green)':'var(--text3)')+';opacity:'+(linked?'1':'0.5')+'">🔗</button>';
+    var presupInput=linked
+      ? '<input type="number" class="editable editable-num" value="'+e.presup+'" disabled title="Auto: total de Suscripciones" style="opacity:0.6;cursor:not-allowed;border-bottom-style:dotted">'
+      : edtNum(e.presup,'updEg('+e.id+',\'presup\',this.value)');
     return '<div class="row" style="flex-direction:column;align-items:stretch;gap:6px;padding-bottom:12px">'+
       '<div style="display:flex;align-items:center;gap:8px">'+
         '<select class="sel-inline" onchange="updEg('+e.id+',\'dest\',this.value)">'+destOpts+'</select>'+
-        '<div class="row-main">'+edt(e.concepto,'max-width:200px','updEg('+e.id+',\'concepto\',this.value)')+'</div>'+
+        '<div class="row-main">'+edt(e.concepto,'max-width:200px','updEg('+e.id+',\'concepto\',this.value)')+
+          (linked?'<span style="font-size:10px;color:var(--green);background:rgba(31,209,150,0.12);padding:2px 7px;border-radius:5px;margin-left:6px;letter-spacing:0.04em">AUTO-SUBS</span>':'')+
+        '</div>'+
+        linkBtn+
         '<div style="font-size:11px;color:var(--text3)">P:</div>'+
-        edtNum(e.presup,'updEg('+e.id+',\'presup\',this.value)')+
+        presupInput+
         '<button class="btn-del" onclick="delEgreso('+e.id+')">✕</button></div>'+
       '<div style="display:flex;align-items:center;gap:8px;padding-left:4px">'+
         '<span style="font-size:11px;color:var(--text3);width:52px">Gastado:</span>'+
@@ -942,7 +952,20 @@ function renderEgresos(){
     '</div>';
   }).join('');
 }
-window.updEg=function(id,f,v){ var o=state.egresos.find(function(e){return e.id===id;}); if(!o) return; if(f==='presup'||f==='gastado') o[f]=parseFloat(v)||0; else o[f]=(v||'').trim()||o[f]; save(); renderEgresos(); };
+window.updEg=function(id,f,v){ var o=state.egresos.find(function(e){return e.id===id;}); if(!o) return; if(f==='presup' && o.linkedToSubs) return; if(f==='presup'||f==='gastado') o[f]=parseFloat(v)||0; else o[f]=(v||'').trim()||o[f]; save(); renderEgresos(); };
+window.toggleEgSubsLink=function(id){
+  var o=state.egresos.find(function(e){return e.id===id;}); if(!o) return;
+  o.linkedToSubs=!o.linkedToSubs;
+  if(o.linkedToSubs) o.presup=totSubsMes();
+  save(); renderEgresos();
+  toast(o.linkedToSubs?'Vinculado a Suscripciones':'Desvinculado');
+};
+function syncLinkedEgresosToSubs(){
+  if(!state||!state.egresos) return false;
+  var t=totSubsMes(), changed=false;
+  state.egresos.forEach(function(e){ if(e.linkedToSubs && e.presup!==t){ e.presup=t; changed=true; } });
+  return changed;
+}
 window.addEgreso=function(){ var c=document.getElementById('eg-concepto').value.trim(),d=document.getElementById('eg-dest').value,p=parseFloat(document.getElementById('eg-presup').value)||0; if(!c||!p) return; state.egresos.push({id:state.nextId++,concepto:c.toUpperCase(),dest:d,presup:p,gastado:0}); document.getElementById('eg-concepto').value=''; document.getElementById('eg-presup').value=''; save(); renderEgresos(); toast('Egreso agregado'); };
 window.delEgreso=function(id){ state.egresos=state.egresos.filter(function(e){return e.id!==id;}); save(); renderEgresos(); toast('Eliminado'); };
 
@@ -1464,9 +1487,9 @@ function renderSubs(){
       '<button class="btn-del" onclick="delSub('+s.id+')">✕</button></div>';
   }).join('');
 }
-window.updSub=function(id,f,v){ var s=subs.find(function(s){return s.id===id;}); if(!s) return; if(f==='costo') s.costo=parseFloat(v)||0; else s[f]=v; save(); renderSubs(); };
-window.addSub=function(){ var n=document.getElementById('sub-nombre').value.trim(),c=parseFloat(document.getElementById('sub-costo').value)||0,p=document.getElementById('sub-prio').value; if(!n) return; subs.push({id:state.nextId++,nombre:n,costo:c,prio:p}); document.getElementById('sub-nombre').value=''; document.getElementById('sub-costo').value=''; save(); renderSubs(); toast('Suscripción agregada'); };
-window.delSub=function(id){ subs=subs.filter(function(s){return s.id!==id;}); save(); renderSubs(); toast('Eliminado'); };
+window.updSub=function(id,f,v){ var s=subs.find(function(s){return s.id===id;}); if(!s) return; if(f==='costo') s.costo=parseFloat(v)||0; else s[f]=v; syncLinkedEgresosToSubs(); save(); renderSubs(); renderEgresos(); renderResumen(); };
+window.addSub=function(){ var n=document.getElementById('sub-nombre').value.trim(),c=parseFloat(document.getElementById('sub-costo').value)||0,p=document.getElementById('sub-prio').value; if(!n) return; subs.push({id:state.nextId++,nombre:n,costo:c,prio:p}); document.getElementById('sub-nombre').value=''; document.getElementById('sub-costo').value=''; syncLinkedEgresosToSubs(); save(); renderSubs(); renderEgresos(); renderResumen(); toast('Suscripción agregada'); };
+window.delSub=function(id){ subs=subs.filter(function(s){return s.id!==id;}); syncLinkedEgresosToSubs(); save(); renderSubs(); renderEgresos(); renderResumen(); toast('Eliminado'); };
 
 // ════════════════════════════════════════════════
 //  CATEGORÍAS
@@ -1523,11 +1546,12 @@ window._appBoot = async function(){
     if(!state.gastos) state.gastos=[];
     if(!state.nextId) state.nextId=200;
     if(!state.saldosIniciales) state.saldosIniciales={};
+    var changed=syncLinkedEgresosToSubs();
     syncStatus('ok');
     if(lastLoadInherited){
       toast('Mes copiado de '+(lastInheritedFrom||'mes anterior'));
       save(true);
-    }
+    } else if(changed){ save(true); }
   } catch(e) {
     console.error(e);
     syncStatus('error');
