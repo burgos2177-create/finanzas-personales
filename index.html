@@ -1290,18 +1290,37 @@ window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;
 //  INVERSIÓN
 // ════════════════════════════════════════════════
 function getUsdRate(){ return (globalConfig&&globalConfig.usdRate)||17.5; }
-function valorBase(p, fechaRef){
+function tfPfInterest(p, fechaRef){
+  if(p.subtipo!=='PF' && p.subtipo!=='TF') return 0;
   var ref = fechaRef ? new Date(fechaRef) : new Date();
+  var inicio = p.fechaInicio ? new Date(p.fechaInicio) : ref;
+  var diasTrans = Math.max(0, (ref - inicio)/(1000*60*60*24));
+  var diasEf = diasTrans;
+  if(p.subtipo==='PF'){
+    var maxDias = (p.plazoMeses||0) * 30.4375;
+    if(maxDias>0) diasEf = Math.min(diasTrans, maxDias);
+  }
+  var tasa = (p.tasaAnual||0)/100;
+  return (p.montoInicial||0) * tasa * diasEf / 365;
+}
+function overflowToPos(targetId, fechaRef){
+  if(!targetId) return 0;
+  var total=0;
+  medios.forEach(function(m){
+    (m.posiciones||[]).forEach(function(p){
+      if(p.destinoId===targetId && (p.tope||0)>0) total+=tfPfInterest(p,fechaRef);
+    });
+  });
+  return total;
+}
+function valorBase(p, fechaRef){
   if(p.subtipo==='PF'||p.subtipo==='TF'){
-    var inicio = p.fechaInicio ? new Date(p.fechaInicio) : ref;
-    var diasTrans = Math.max(0, (ref - inicio)/(1000*60*60*24));
-    var diasEf = diasTrans;
-    if(p.subtipo==='PF'){
-      var maxDias = (p.plazoMeses||0) * 30.4375;
-      if(maxDias>0) diasEf = Math.min(diasTrans, maxDias);
-    }
-    var tasa = (p.tasaAnual||0)/100;
-    return (p.montoInicial||0) * (1 + tasa * diasEf / 365);
+    var monto=p.montoInicial||0;
+    var ownValue;
+    if((p.tope||0)>0) ownValue=monto;
+    else ownValue=monto+tfPfInterest(p,fechaRef);
+    ownValue+=overflowToPos(p.id,fechaRef);
+    return ownValue;
   }
   if(p.subtipo==='RV') return p.valorActual||0;
   if(p.subtipo==='Acciones'||p.subtipo==='Cripto'){
@@ -1486,7 +1505,7 @@ window.updPos=function(medioId,posId,f,v){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
   var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
   var oldV=valorPos(p);
-  if(['valorActual','precioActual','precioCompra','montoInicial','montoInvertido','cantidad','tasaAnual','plazoMeses','usdRateCompra'].indexOf(f)>=0) p[f]=parseFloat(v)||0;
+  if(['valorActual','precioActual','precioCompra','montoInicial','montoInvertido','cantidad','tasaAnual','plazoMeses','usdRateCompra','tope'].indexOf(f)>=0) p[f]=parseFloat(v)||0;
   else if(f==='moneda'){
     var prev=p.moneda||'MXN';
     p.moneda=v;
@@ -1599,6 +1618,16 @@ window.payCompra=function(id,delta){
   save(); renderSaldos();
 };
 
+function buildDestinoSelect(medioId,p){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return '';
+  var others=(m.posiciones||[]).filter(function(o){return o.id!==p.id;});
+  var opts='<option value="">— Sin destino —</option>'+
+    others.map(function(o){
+      var lbl=(o.nombre||'')+(o.grupo?' · '+o.grupo:'')+' ('+(SUBTIPOS_INV[o.subtipo]||{label:'?'}).label+')';
+      return '<option value="'+esc(o.id)+'"'+(o.id===p.destinoId?' selected':'')+'>'+esc(lbl)+'</option>';
+    }).join('');
+  return '<select onchange="updPos('+medioId+',\''+p.id+'\',\'destinoId\',this.value)" style="width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:13px;font-family:var(--font);padding:4px 7px;outline:none">'+opts+'</select>';
+}
 function posDetailsHtml(medioId,p){
   var st=p.subtipo;
   var pid=p.id;
@@ -1606,24 +1635,40 @@ function posDetailsHtml(medioId,p){
     var inicio=p.fechaInicio?new Date(p.fechaInicio):null;
     var dias=inicio?Math.floor((Date.now()-inicio)/(1000*60*60*24)):0;
     var venc=inicio&&p.plazoMeses?new Date(inicio.getTime()+p.plazoMeses*30.4375*24*60*60*1000):null;
+    var tope=p.tope||0, recibido=overflowToPos(p.id);
+    var topeHtml='<div class="inv-stat" title="Si > 0, el saldo no compone (queda en monto inicial); el interés generado se ramifica al destino"><div class="inv-stat-lbl">Tope</div><input type="number" value="'+tope+'" min="0" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'tope\',this.value)"></div>';
+    var capExtras=tope>0?
+      '<div class="inv-stat"><div class="inv-stat-lbl">Destino interés</div>'+buildDestinoSelect(medioId,p)+'</div>'+
+      '<div class="inv-stat"><div class="inv-stat-lbl">Interés (al destino)</div><div class="inv-stat-val" style="color:var(--amber)">+'+fmt(tfPfInterest(p))+'</div></div>'
+      :'';
+    var recibidoHtml=recibido>0.005?'<div class="inv-stat"><div class="inv-stat-lbl">Recibido (cap)</div><div class="inv-stat-val green">+'+fmt(recibido)+'</div></div>':'';
     return '<div class="inv-stat-grid">'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Monto inicial</div><input type="number" value="'+(p.montoInicial||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'montoInicial\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Tasa anual %</div><input type="number" value="'+(p.tasaAnual||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'tasaAnual\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Plazo (meses)</div><input type="number" value="'+(p.plazoMeses||0)+'" min="0" onchange="updPos('+medioId+',\''+pid+'\',\'plazoMeses\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Días transcurridos</div><div class="inv-stat-val">'+dias+'</div></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Vencimiento</div><div class="inv-stat-val" style="font-size:13px">'+(venc?venc.toLocaleDateString('es-MX'):'—')+'</div></div>'+
+      topeHtml+capExtras+recibidoHtml+
       saldoHoyHtml(medioId,p)+
     '</div>';
   }
   if(st==='TF'){
     var inicioTF=p.fechaInicio?new Date(p.fechaInicio):null;
     var diasTF=inicioTF?Math.floor((Date.now()-inicioTF)/(1000*60*60*24)):0;
-    var intereses=valorPos(p)-(p.montoInicial||0);
+    var topeTF=p.tope||0, recibidoTF=overflowToPos(p.id);
+    var ownInt=tfPfInterest(p);
+    var intLbl=topeTF>0?'Interés (al destino)':'Intereses';
+    var intCol=topeTF>0?'var(--amber)':'var(--green)';
+    var topeHtmlTF='<div class="inv-stat" title="Si > 0, el saldo no compone (queda en monto inicial); el interés generado se ramifica al destino"><div class="inv-stat-lbl">Tope</div><input type="number" value="'+topeTF+'" min="0" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'tope\',this.value)"></div>';
+    var destinoTF=topeTF>0?'<div class="inv-stat"><div class="inv-stat-lbl">Destino interés</div>'+buildDestinoSelect(medioId,p)+'</div>':'';
+    var recibidoHtmlTF=recibidoTF>0.005?'<div class="inv-stat"><div class="inv-stat-lbl">Recibido (cap)</div><div class="inv-stat-val green">+'+fmt(recibidoTF)+'</div></div>':'';
     return '<div class="inv-stat-grid">'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Monto inicial</div><input type="number" value="'+(p.montoInicial||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'montoInicial\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Tasa anual %</div><input type="number" value="'+(p.tasaAnual||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'tasaAnual\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Días devengados</div><div class="inv-stat-val">'+diasTF+'</div></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Intereses</div><div class="inv-stat-val green">+'+fmt(intereses)+'</div></div>'+
+      topeHtmlTF+destinoTF+
+      '<div class="inv-stat"><div class="inv-stat-lbl">'+intLbl+'</div><div class="inv-stat-val" style="color:'+intCol+'">+'+fmt(ownInt)+'</div></div>'+
+      recibidoHtmlTF+
       saldoHoyHtml(medioId,p)+
     '</div>';
   }
