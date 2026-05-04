@@ -525,7 +525,7 @@ var DEFAULT_MES_STATE={
 //  STATE
 // ════════════════════════════════════════════════
 var currentMes='Enero', currentAnio='2026';
-var state={}, subs=[], cats=[], medios=[];
+var state={}, subs=[], cats=[], medios=[], compras=[];
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
@@ -559,7 +559,8 @@ function save(skipDelay){
     var p2 = window._setDoc(globalDocRef('subs'), {list: subs});
     var p3 = window._setDoc(globalDocRef('cats'), {list: cats});
     var p4 = window._setDoc(globalDocRef('medios'), {list: medios});
-    Promise.all([p1,p2,p3,p4])
+    var p5 = window._setDoc(globalDocRef('compras'), {list: compras});
+    Promise.all([p1,p2,p3,p4,p5])
       .then(function(){ syncStatus('ok'); })
       .catch(function(e){ console.error(e); syncStatus('error'); toast('Error al guardar',true); });
   }, delay);
@@ -1058,8 +1059,21 @@ window.addGasto=function(){
   save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos();
   toast(tipo==='ingreso'?'Ingreso registrado':'Gasto registrado');
 };
-window.updGasto=function(id,f,v){ var g=state.gastos.find(function(g){return g.id===id;}); if(!g) return; if(f==='monto') g.monto=parseFloat(v)||0; else g[f]=(v||'').trim()||g[f]; save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos(); };
-window.delGasto=function(id){ state.gastos=state.gastos.filter(function(g){return g.id!==id;}); save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos(); toast('Eliminado'); };
+window.updGasto=function(id,f,v){
+  var g=state.gastos.find(function(g){return g.id===id;}); if(!g) return;
+  if(f==='monto'){
+    g.monto=parseFloat(v)||0;
+    if(g.transferId){ state.gastos.forEach(function(x){ if(x.id!==g.id && x.transferId===g.transferId) x.monto=g.monto; }); }
+  } else { g[f]=(v||'').trim()||g[f]; }
+  save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos();
+};
+window.delGasto=function(id){
+  var g=state.gastos.find(function(x){return x.id===id;});
+  if(g && g.transferId) state.gastos=state.gastos.filter(function(x){return x.transferId!==g.transferId;});
+  else state.gastos=state.gastos.filter(function(x){return x.id!==id;});
+  save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos();
+  toast(g && g.transferId?'Transferencia eliminada':'Eliminado');
+};
 
 // ════════════════════════════════════════════════
 //  MEDIOS DE PAGO
@@ -1120,6 +1134,67 @@ window.addMedio=function(){
   save(); renderMedios(); populateMediosSels(); toast('Medio agregado');
 };
 window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;}); save(); renderMedios(); renderSaldos(); populateMediosSels(); toast('Eliminado'); };
+
+// ════════════════════════════════════════════════
+//  COMPRAS A MESES (MSI/MSC)
+// ════════════════════════════════════════════════
+function pagoMensual(c){
+  var m=Math.max(1,c.meses||1), tot=c.montoTotal||0, i=(c.interes||0)/100;
+  if(c.tipo==='MSC' && i>0){
+    var r=i/12;
+    return tot*r/(1-Math.pow(1+r,-m));
+  }
+  return tot/m;
+}
+function totalConIntereses(c){ return pagoMensual(c)*(c.meses||1); }
+function comprasByMp(mp){ return compras.filter(function(c){return c.mp===mp;}); }
+
+window.addCompra=function(medioId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var d=document.getElementById('cmp-desc-'+medioId).value.trim();
+  var t=parseFloat(document.getElementById('cmp-monto-'+medioId).value)||0;
+  var meses=parseInt(document.getElementById('cmp-meses-'+medioId).value)||0;
+  var tipo=document.getElementById('cmp-tipo-'+medioId).value;
+  var interesEl=document.getElementById('cmp-int-'+medioId);
+  var interes=interesEl?parseFloat(interesEl.value)||0:0;
+  if(!d||!t||!meses){ toast('Faltan datos',true); return; }
+  compras.push({id:state.nextId++,mp:m.nombre,desc:d,montoTotal:t,meses:meses,tipo:tipo,interes:tipo==='MSC'?interes:0,pagosHechos:0,fechaInicio:defaultFechaForViewedMonth()});
+  save(); renderSaldos(); toast('Compra agregada');
+};
+window.delCompra=function(id){
+  if(!confirm('¿Eliminar esta compra a meses?')) return;
+  compras=compras.filter(function(c){return c.id!==id;});
+  save(); renderSaldos(); toast('Compra eliminada');
+};
+window.payCompra=function(id,delta){
+  var c=compras.find(function(x){return x.id===id;}); if(!c) return;
+  c.pagosHechos=Math.max(0,Math.min((c.meses||0),(c.pagosHechos||0)+delta));
+  save(); renderSaldos();
+};
+
+// ════════════════════════════════════════════════
+//  TRANSFERENCIAS (Pago de tarjeta de crédito)
+// ════════════════════════════════════════════════
+window.togglePagarTC=function(medioId){
+  var box=document.getElementById('ptc-form-'+medioId); if(!box) return;
+  box.style.display=box.style.display==='none'?'flex':'none';
+};
+window.realizarPagoTC=function(fromMedioId){
+  var from=medios.find(function(x){return x.id===fromMedioId;}); if(!from) return;
+  var toId=parseInt(document.getElementById('ptc-to-'+fromMedioId).value,10);
+  var to=medios.find(function(x){return x.id===toId;}); if(!to){ toast('Selecciona TC destino',true); return; }
+  if(to.tipo!=='Crédito'){ toast('Destino debe ser Crédito',true); return; }
+  var monto=parseFloat(document.getElementById('ptc-monto-'+fromMedioId).value)||0;
+  if(!monto){ toast('Falta el monto',true); return; }
+  var tid='t'+(state.nextId++);
+  var fecha=defaultFechaForViewedMonth();
+  if(!state.gastos) state.gastos=[];
+  state.gastos.push({id:state.nextId++,tipo:'egreso',desc:'Pago TC '+to.nombre,cat:'Pago TC',mp:from.nombre,monto:monto,fecha:fecha,transferId:tid});
+  state.gastos.push({id:state.nextId++,tipo:'ingreso',desc:'Abono desde '+from.nombre,cat:'Pago TC',mp:to.nombre,monto:monto,fecha:fecha,transferId:tid});
+  document.getElementById('ptc-monto-'+fromMedioId).value='';
+  save(); renderSaldos(); renderBitacora(); renderResumen();
+  toast('Pago de TC registrado');
+};
 
 // ════════════════════════════════════════════════
 //  SALDOS
@@ -1204,12 +1279,70 @@ function renderSaldos(){
     }
     var lblEgr=isCred?'+ Cargo':'+ Egreso';
     var lblIng=isCred?'+ Abono':'+ Ingreso';
+    var ptcBtn = !isCred && medios.some(function(x){return x.tipo==='Crédito';})
+      ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="togglePagarTC('+m.id+')">💳 Pagar TC</button>'
+      : '';
     var quick='<div style="display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">'+
       '<input id="quick-desc-'+m.id+'" type="text" placeholder="Descripción" style="flex:2;min-width:120px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--font);outline:none">'+
       '<input id="quick-monto-'+m.id+'" type="number" placeholder="Monto" min="0" step="0.01" style="width:90px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
       '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--red);border-color:rgba(240,92,92,0.3)" onclick="quickAddMov('+m.id+',\'egreso\')">'+lblEgr+'</button>'+
       '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="quickAddMov('+m.id+',\'ingreso\')">'+lblIng+'</button>'+
+      ptcBtn+
       '</div>';
+    var ptcForm='';
+    if(!isCred){
+      var tcOpts=medios.filter(function(x){return x.tipo==='Crédito';}).map(function(x){
+        return '<option value="'+x.id+'">'+esc(x.icono||'💳')+' '+esc(x.nombre)+'</option>';
+      }).join('');
+      ptcForm='<div id="ptc-form-'+m.id+'" style="display:none;align-items:center;gap:6px;margin-top:8px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;flex-wrap:wrap">'+
+        '<span style="font-size:11px;color:var(--text3)">Pagar →</span>'+
+        '<select id="ptc-to-'+m.id+'" class="sel-inline" style="font-size:12px">'+(tcOpts||'<option value="">— sin TC —</option>')+'</select>'+
+        '<input id="ptc-monto-'+m.id+'" type="number" placeholder="Monto" min="0" step="0.01" style="width:100px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
+        '<button class="btn btn-green" style="padding:5px 12px;font-size:11px" onclick="realizarPagoTC('+m.id+')">Realizar pago</button>'+
+        '<button class="btn" style="padding:5px 10px;font-size:11px" onclick="togglePagarTC('+m.id+')">Cancelar</button>'+
+      '</div>';
+    }
+    var msiSection='';
+    if(isCred){
+      var cms=comprasByMp(m.nombre);
+      var totRestCompras=cms.reduce(function(a,c){
+        var pm=pagoMensual(c); var rem=Math.max((c.meses||0)-(c.pagosHechos||0),0);
+        return a+pm*rem;
+      },0);
+      var listHtml=cms.length?cms.map(function(c){
+        var pm=pagoMensual(c);
+        var rem=Math.max((c.meses||0)-(c.pagosHechos||0),0);
+        var pagado=Math.min(c.pagosHechos||0,c.meses||0);
+        var pctC=(c.meses||0)>0?Math.round(pagado/c.meses*100):0;
+        var rest=pm*rem;
+        return '<div style="padding:9px 0;border-bottom:1px solid var(--border)">'+
+          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+            '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;background:'+(c.tipo==='MSC'?'rgba(245,165,36,0.15);color:var(--amber)':'rgba(91,156,246,0.15);color:var(--blue)')+'">'+esc(c.tipo)+' '+c.meses+'</span>'+
+            '<div style="flex:1;min-width:120px;font-size:13px">'+esc(c.desc)+
+              '<div style="font-size:10px;color:var(--text3);margin-top:2px">Total '+fmt(c.montoTotal)+(c.tipo==='MSC'?' · '+c.interes+'% anual · pagas '+fmt(totalConIntereses(c)):'')+'</div></div>'+
+            '<div style="text-align:right;font-size:11px;font-family:var(--mono)"><div style="color:var(--text2)">'+fmt(pm)+'/mes</div><div style="color:var(--red)">Resta '+fmt(rest)+'</div></div>'+
+            '<button class="btn" style="padding:3px 8px;font-size:11px" onclick="payCompra('+c.id+',1)" title="Marcar mensualidad pagada">+1</button>'+
+            '<button class="btn" style="padding:3px 8px;font-size:11px" onclick="payCompra('+c.id+',-1)" title="Deshacer">−1</button>'+
+            '<button class="btn-del" onclick="delCompra('+c.id+')">✕</button></div>'+
+          '<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="font-size:10px;color:var(--text3);min-width:54px">'+pagado+'/'+c.meses+' ('+pctC+'%)</span><div style="flex:1"><div class="prog-track"><div class="prog-fill" style="width:'+pctC+'%"></div></div></div></div>'+
+        '</div>';
+      }).join(''):'<div style="text-align:center;color:var(--text3);padding:10px;font-size:12px">Sin compras a meses</div>';
+      msiSection='<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'+
+          '<div style="font-size:12px;font-weight:500">Compras a meses ('+cms.length+')</div>'+
+          (cms.length?'<div style="font-size:11px;font-family:var(--mono);color:var(--red)">Restante: '+fmt(totRestCompras)+'</div>':'')+
+        '</div>'+
+        listHtml+
+        '<div style="display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap">'+
+          '<input id="cmp-desc-'+m.id+'" type="text" placeholder="Descripción" style="flex:2;min-width:120px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;outline:none">'+
+          '<input id="cmp-monto-'+m.id+'" type="number" placeholder="Total $" min="0" step="0.01" style="width:90px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
+          '<input id="cmp-meses-'+m.id+'" type="number" placeholder="Meses" min="1" max="60" style="width:70px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
+          '<select id="cmp-tipo-'+m.id+'" class="sel-inline" onchange="document.getElementById(\'cmp-int-wrap-'+m.id+'\').style.display=this.value===\'MSC\'?\'inline-flex\':\'none\'" style="font-size:12px"><option value="MSI">MSI</option><option value="MSC">MSC</option></select>'+
+          '<span id="cmp-int-wrap-'+m.id+'" style="display:none;align-items:center;gap:4px"><input id="cmp-int-'+m.id+'" type="number" placeholder="% anual" min="0" step="0.01" style="width:80px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right"></span>'+
+          '<button class="btn btn-green" style="padding:5px 12px;font-size:11px" onclick="addCompra('+m.id+')">+ Compra</button>'+
+        '</div>'+
+      '</div>';
+    }
     var movs=movsForMp(m.nombre);
     var expanded=!!expandedMps[m.nombre];
     var movToggle='<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">'+
@@ -1231,7 +1364,7 @@ function renderSaldos(){
         }).join(''):'<div style="text-align:center;color:var(--text3);padding:14px;font-size:12px">Sin movimientos en este mes</div>')+
       '</div>';
     }
-    return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+statsHtml+'</div>'+footer+quick+movToggle+movList+'</div>';
+    return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+statsHtml+'</div>'+footer+quick+ptcForm+msiSection+movToggle+movList+'</div>';
   }).join('');
   document.getElementById('saldos-list').innerHTML=html||'<div class="empty">Sin medios de pago configurados. Ve a Medios de Pago para agregar.</div>';
 }
@@ -1317,6 +1450,7 @@ window._appBoot = async function(){
     medios = await loadGlobalFromFirestore('medios', DEFAULT_MEDIOS);
     cats   = await loadGlobalFromFirestore('cats', DEFAULT_CATS);
     subs   = await loadGlobalFromFirestore('subs', []);
+    compras = await loadGlobalFromFirestore('compras', []);
     state  = await loadMesFromFirestore();
     if(!state.gastos) state.gastos=[];
     if(!state.nextId) state.nextId=200;
@@ -1332,7 +1466,7 @@ window._appBoot = async function(){
     toast('Error cargando datos. Revisa tu conexión.',true);
     medios=JSON.parse(JSON.stringify(DEFAULT_MEDIOS));
     cats=JSON.parse(JSON.stringify(DEFAULT_CATS));
-    subs=[];
+    subs=[]; compras=[];
     state=JSON.parse(JSON.stringify(DEFAULT_MES_STATE));
   }
   populateMediosSels(); populateCatSel();
