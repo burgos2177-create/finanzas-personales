@@ -930,7 +930,10 @@ function renderEgresos(){
     var cls=pct>=100?'over':pct>=80?'warn':'';
     var destOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===e.dest?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
     var linked=!!e.linkedToSubs;
-    var linkBtn='<button title="'+(linked?'Vinculado a Suscripciones — clic para desvincular':'Vincular presupuesto al total de Suscripciones')+'" onclick="toggleEgSubsLink('+e.id+')" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px;color:'+(linked?'var(--green)':'var(--text3)')+';opacity:'+(linked?'1':'0.5')+'">🔗</button>';
+    var showLink=linked || (e.concepto||'').trim().toUpperCase()==='SUSCRIPCIONES';
+    var linkBtn=showLink
+      ? '<button title="'+(linked?'Vinculado a Suscripciones — clic para desvincular':'Vincular presupuesto al total de Suscripciones')+'" onclick="toggleEgSubsLink('+e.id+')" style="background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px;color:'+(linked?'var(--green)':'var(--text3)')+';opacity:'+(linked?'1':'0.5')+'">🔗</button>'
+      : '';
     var presupInput=linked
       ? '<input type="number" class="editable editable-num" value="'+e.presup+'" disabled title="Auto: total de Suscripciones" style="opacity:0.6;cursor:not-allowed;border-bottom-style:dotted">'
       : edtNum(e.presup,'updEg('+e.id+',\'presup\',this.value)');
