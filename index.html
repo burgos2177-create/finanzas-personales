@@ -157,6 +157,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .cat-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:12px;margin:3px 4px 3px 0;cursor:default;border:1px solid transparent}
 .cat-pill-del{background:none;border:none;color:inherit;cursor:pointer;font-size:11px;opacity:0.6;padding:0 0 0 2px;line-height:1}
 .cat-pill-del:hover{opacity:1}
+.cat-pill input[type=color]{width:14px;height:14px;border:none;background:none;cursor:pointer;padding:0;flex-shrink:0}
+.cat-name-edit{background:transparent;border:none;color:inherit;font:inherit;padding:0 1px;outline:none;border-bottom:1px dashed transparent;border-radius:0;transition:border-color 0.15s}
+.cat-name-edit:hover{border-bottom-color:rgba(255,255,255,0.15)}
+.cat-name-edit:focus{border-bottom-color:currentColor}
 /* Loading overlay */
 #loading-overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:9998}
 .spinner{width:32px;height:32px;border:3px solid var(--border2);border-top-color:var(--green);border-radius:50%;animation:spin 0.7s linear infinite}
@@ -1470,10 +1474,23 @@ window.delSub=function(id){ subs=subs.filter(function(s){return s.id!==id;}); sa
 function renderCats(){
   document.getElementById('cats-list').innerHTML=cats.map(function(c){
     return '<span class="cat-pill" style="background:'+c.color+'22;border-color:'+c.color+'44;color:'+c.color+'">'+
-      '<span style="width:8px;height:8px;border-radius:50%;background:'+c.color+';display:inline-block"></span> '+
-      esc(c.nombre)+'<button class="cat-pill-del" onclick="delCat('+c.id+')">✕</button></span>';
+      '<input type="color" value="'+c.color+'" onchange="updCat('+c.id+',\'color\',this.value)" title="Cambiar color">'+
+      '<input class="cat-name-edit" value="'+esc(c.nombre)+'" size="'+Math.max(c.nombre.length,4)+'" onblur="updCat('+c.id+',\'nombre\',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()">'+
+      '<button class="cat-pill-del" onclick="delCat('+c.id+')">✕</button></span>';
   }).join('');
 }
+window.updCat=function(id,f,v){
+  var c=cats.find(function(x){return x.id===id;}); if(!c) return;
+  if(f==='nombre'){
+    var nv=(v||'').trim();
+    if(!nv||nv===c.nombre){ renderCats(); return; }
+    if(cats.find(function(o){return o.id!==c.id && o.nombre.toLowerCase()===nv.toLowerCase();})){ toast('Nombre ya existe',true); renderCats(); return; }
+    var oldName=c.nombre;
+    (state.gastos||[]).forEach(function(g){if(g.cat===oldName) g.cat=nv;});
+    c.nombre=nv;
+  } else if(f==='color'){ c.color=v; }
+  save(); renderCats(); populateCatSel();
+};
 window.addCat=function(){ var n=document.getElementById('cat-nueva').value.trim(),color=document.getElementById('cat-color').value; if(!n) return; if(cats.find(function(c){return c.nombre.toLowerCase()===n.toLowerCase();})){toast('Ya existe',true);return;} cats.push({id:state.nextId++,nombre:n,color:color}); document.getElementById('cat-nueva').value=''; save(); renderCats(); populateCatSel(); toast('Categoría agregada'); };
 window.delCat=function(id){ cats=cats.filter(function(c){return c.id!==id;}); save(); renderCats(); toast('Eliminada'); };
 
