@@ -530,6 +530,7 @@ var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
 var saveTimer=null;
+var lastLoadInherited=false, lastInheritedFrom=null;
 
 // ── Firestore path helpers ──
 function uid(){ return window._currentUser ? window._currentUser.uid : null; }
@@ -565,7 +566,23 @@ function save(skipDelay){
 }
 
 // ── Load from Firestore ──
+async function findLatestMonthBefore(anio, mesName){
+  var coll = window._collection(window._db, 'usuarios', uid(), 'meses');
+  var snap = await window._getDocs(coll);
+  var current = parseInt(anio,10)*12 + MESES.indexOf(mesName);
+  var bestKey=-1, bestData=null, bestId=null;
+  snap.forEach(function(d){
+    var parts=d.id.split('_');
+    if(parts.length<2) return;
+    var y=parseInt(parts[0],10), m=MESES.indexOf(parts[1]);
+    if(isNaN(y)||m<0) return;
+    var key=y*12+m;
+    if(key<current && key>bestKey){ bestKey=key; bestData=d.data(); bestId=d.id; }
+  });
+  return bestData?{data:bestData,id:bestId}:null;
+}
 async function loadMesFromFirestore(){
+  lastLoadInherited=false; lastInheritedFrom=null;
   var snap = await window._getDoc(mesDocRef());
   if(snap.exists()){
     var d = snap.data();
@@ -574,6 +591,19 @@ async function loadMesFromFirestore(){
     if(!d.saldosIniciales) d.saldosIniciales={};
     return d;
   }
+  try {
+    var prev = await findLatestMonthBefore(currentAnio, currentMes);
+    if(prev){
+      lastLoadInherited=true;
+      var pp=prev.id.split('_'); lastInheritedFrom=(pp[1]||'')+' '+(pp[0]||'');
+      var maxId=200;
+      var bump=function(o){ if(o && typeof o.id==='number' && o.id>=maxId) maxId=o.id+1; };
+      var ingresos=(prev.data.ingresos||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
+      var egresos=(prev.data.egresos||[]).map(function(o){bump(o); var c=JSON.parse(JSON.stringify(o)); c.gastado=0; return c;});
+      var distribucion=(prev.data.distribucion||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
+      return { ingresos:ingresos, egresos:egresos, distribucion:distribucion, gastos:[], saldosIniciales:{}, nextId:maxId };
+    }
+  } catch(e) { console.error('Error heredando mes anterior:',e); }
   return JSON.parse(JSON.stringify(DEFAULT_MES_STATE));
 }
 async function loadGlobalFromFirestore(name, def){
@@ -672,10 +702,14 @@ async function changeMes(){
   currentMes=document.getElementById('mes-select').value;
   currentAnio=document.getElementById('anio-select').value;
   document.getElementById('header-sub').textContent=currentAnio;
-  bitFilterCat='Todos'; bitFilterMP='Todos';
+  bitFilterCat='Todos'; bitFilterMP='Todos'; bitFilterTipo='Todos';
   syncStatus('saving');
   state = await loadMesFromFirestore();
   syncStatus('ok');
+  if(lastLoadInherited){
+    toast('Mes copiado de '+(lastInheritedFrom||'mes anterior'));
+    save(true);
+  }
   renderAll();
 }
 window.changeMes = changeMes;
@@ -1288,6 +1322,10 @@ window._appBoot = async function(){
     if(!state.nextId) state.nextId=200;
     if(!state.saldosIniciales) state.saldosIniciales={};
     syncStatus('ok');
+    if(lastLoadInherited){
+      toast('Mes copiado de '+(lastInheritedFrom||'mes anterior'));
+      save(true);
+    }
   } catch(e) {
     console.error(e);
     syncStatus('error');
