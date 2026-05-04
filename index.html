@@ -537,7 +537,7 @@ var DEFAULT_MES_STATE={
 var currentMes='Enero', currentAnio='2026';
 var state={}, subs=[], cats=[], medios=[], compras=[];
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
-var expandedMps={};
+var expandedMps={}, advancedTC={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
@@ -1347,8 +1347,10 @@ function renderSaldos(){
         saldoStat('Abonos / pagos',fmt(abonos),'green')+
         saldoStat('Saldo a pagar',fmt(aPagar),aPagar>0?'red':'green')+
         saldoStat('Disponible',fmt(Math.max(disp,0)),disp<0?'red':'blue');
-      var bulkBtn=cargos>0?'<button class="btn" style="padding:4px 10px;font-size:11px;color:var(--amber);border-color:rgba(245,165,36,0.3)" onclick="cargosTCToDeuda('+m.id+')" title="Mueve todos los cargos del mes a Deuda heredada">Mover cargos → deuda</button>':'';
-      footer='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div>'+bulkBtn+'</div>';
+      var advOpen=!!advancedTC[m.nombre];
+      var advToggle='<button class="btn" style="padding:3px 9px;font-size:11px;color:var(--text3)" onclick="toggleAdvancedTC(\''+esc(m.nombre)+'\')" title="Acciones avanzadas">'+(advOpen?'▼':'⚙')+'</button>';
+      var bulkBtn=(advOpen && cargos>0)?'<button class="btn" style="padding:4px 10px;font-size:11px;color:var(--amber);border-color:rgba(245,165,36,0.3)" onclick="cargosTCToDeuda('+m.id+')" title="Mueve todos los cargos del mes a Deuda heredada">Mover cargos → deuda</button>':'';
+      footer='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div>'+advToggle+bulkBtn+'</div>';
     } else {
       var ini=saldosIni[m.nombre]||0;
       var saldoFinal=ini+mv.ing-mv.egr;
@@ -1436,7 +1438,7 @@ function renderSaldos(){
       movList='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">'+
         (movs.length?movs.map(function(g){
           var isI=gTipo(g)==='ingreso';
-          var canConvert=isCred && !isI;
+          var canConvert=isCred && !isI && !!advancedTC[m.nombre];
           return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">'+
             '<span class="tipo-badge '+(isI?'ing':'egr')+'">'+(isI?'ING':'EGR')+'</span>'+
             '<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g.desc)+
@@ -1453,6 +1455,7 @@ function renderSaldos(){
   document.getElementById('saldos-list').innerHTML=html||'<div class="empty">Sin medios de pago configurados. Ve a Medios de Pago para agregar.</div>';
 }
 window.toggleSaldoMov=function(mp){ expandedMps[mp]=!expandedMps[mp]; renderSaldos(); };
+window.toggleAdvancedTC=function(mp){ advancedTC[mp]=!advancedTC[mp]; renderSaldos(); };
 window.cargoToDeuda=function(id){
   var g=state.gastos.find(function(x){return x.id===id;}); if(!g) return;
   if(!confirm('¿Mover este cargo a Deuda heredada de '+g.mp+'?\n\nMonto: '+fmt(g.monto)+'\n\n• Se elimina de la bitácora del mes\n• Se suma a la deuda inicial de la TC\n• El saldo a pagar de la TC NO cambia')) return;
