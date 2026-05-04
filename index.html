@@ -128,6 +128,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .subtipo-RV{background:rgba(155,142,247,0.15);color:var(--purple)}
 .subtipo-Acciones{background:rgba(31,209,150,0.15);color:var(--green)}
 .subtipo-Cripto{background:rgba(245,165,36,0.15);color:var(--amber)}
+.liquid-badge{display:inline-block;font-size:9px;font-weight:600;padding:2px 7px;border-radius:5px;background:rgba(80,200,240,0.15);color:#50c8f0;letter-spacing:0.04em;text-transform:uppercase}
+.pos-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.pos-action-btn{padding:5px 12px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-family:var(--font);transition:all 0.15s}
+.pos-action-btn:hover{background:var(--bg4);color:var(--text)}
+.pos-action-btn.active{background:rgba(31,209,150,0.12);border-color:rgba(31,209,150,0.35);color:var(--green)}
+.pos-action-form{margin-top:8px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px}
 .field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px}
 .field input,.field select{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:13px;font-family:var(--font);outline:none;transition:border-color 0.15s}
 .field input:focus,.field select:focus{border-color:var(--green2)}
@@ -591,7 +597,7 @@ var DEFAULT_MES_STATE={
 var currentMes='Enero', currentAnio='2026';
 var state={}, subs=[], cats=[], medios=[], compras=[], globalConfig={usdRate:17.5};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
-var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={};
+var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
@@ -1531,6 +1537,176 @@ window.delPos=function(medioId,posId){
 };
 window.toggleAddPos=function(medioId){ expandedAddPos[medioId]=!expandedAddPos[medioId]; renderInversion(); };
 window.toggleAdjustPos=function(posId){ adjustingPos[posId]=!adjustingPos[posId]; renderInversion(); };
+function appendHistoriaPos(p){
+  if(!p.historia) p.historia=[];
+  var hoy=new Date().toISOString().slice(0,10);
+  var v=valorPos(p);
+  var last=p.historia[p.historia.length-1];
+  if(last && last.fecha===hoy) last.valor=v;
+  else p.historia.push({fecha:hoy,valor:v});
+}
+function ensureLotes(p){
+  if(p.lotes && p.lotes.length) return;
+  p.lotes=[];
+  if((p.cantidad||0)>0){
+    p.lotes.push({fecha:p.fechaInicio||new Date().toISOString().slice(0,10),cantidad:p.cantidad,precioCompra:p.precioCompra||0});
+  }
+}
+function recomputeAvgPrecioCompra(p){
+  if(!p.lotes||!p.lotes.length) return;
+  var tQ=0,tC=0;
+  p.lotes.forEach(function(l){ tQ+=(l.cantidad||0); tC+=(l.cantidad||0)*(l.precioCompra||0); });
+  if(tQ>0) p.precioCompra=tC/tQ;
+}
+function liquidsInGroup(medioId, grupo, excludeId){
+  var m=medios.find(function(x){return x.id===medioId;});
+  if(!m) return [];
+  var g=(grupo||'').trim();
+  return (m.posiciones||[]).filter(function(p){return p.liquid===true && (p.grupo||'').trim()===g && p.id!==excludeId;});
+}
+function debitableMedios(){
+  return medios.filter(function(m){return m.tipo==='Débito'||m.tipo==='Digital'||m.tipo==='Efectivo';});
+}
+window.toggleLiquid=function(medioId,posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  p.liquid=!p.liquid;
+  save(); renderInversion();
+  toast(p.liquid?'Marcado como líquido':'Ya no es líquido');
+};
+window.toggleActionForm=function(posId,action){
+  if(actionForm[posId]===action) actionForm[posId]=null;
+  else actionForm[posId]=action;
+  renderInversion();
+};
+window.executeBuyMore=function(medioId,posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  var srcId=document.getElementById('buy-src-'+posId).value;
+  var qty=parseFloat(document.getElementById('buy-qty-'+posId).value)||0;
+  var price=parseFloat(document.getElementById('buy-price-'+posId).value)||0;
+  var fecha=document.getElementById('buy-fecha-'+posId).value||new Date().toISOString().slice(0,10);
+  if(!srcId||!qty||!price){ toast('Faltan datos',true); return; }
+  var src=(m.posiciones||[]).find(function(x){return x.id===srcId;});
+  if(!src){ toast('Líquido no encontrado',true); return; }
+  if((src.moneda||'MXN')!==(p.moneda||'MXN')){ toast('Moneda del líquido y la posición no coinciden',true); return; }
+  var cost=qty*price;
+  if((src.cantidad||0)<cost-0.005){ toast('Saldo insuficiente en líquido ('+fmt(src.cantidad||0)+')',true); return; }
+  ensureLotes(p);
+  p.lotes.push({fecha:fecha,cantidad:qty,precioCompra:price});
+  p.cantidad=(p.cantidad||0)+qty;
+  recomputeAvgPrecioCompra(p);
+  src.cantidad=(src.cantidad||0)-cost;
+  appendHistoriaPos(p); appendHistoriaPos(src);
+  actionForm[posId]=null;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Compra registrada');
+};
+window.executeSell=function(medioId,posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  var dstId=document.getElementById('sell-dst-'+posId).value;
+  var qty=parseFloat(document.getElementById('sell-qty-'+posId).value)||0;
+  var price=parseFloat(document.getElementById('sell-price-'+posId).value)||0;
+  if(!dstId||!qty||!price){ toast('Faltan datos',true); return; }
+  var dst=(m.posiciones||[]).find(function(x){return x.id===dstId;});
+  if(!dst){ toast('Líquido destino no encontrado',true); return; }
+  if((dst.moneda||'MXN')!==(p.moneda||'MXN')){ toast('Moneda del líquido y la posición no coinciden',true); return; }
+  if((p.cantidad||0)<qty-0.000001){ toast('Cantidad excede tenencia ('+(p.cantidad||0)+')',true); return; }
+  var proceeds=qty*price;
+  p.cantidad=(p.cantidad||0)-qty;
+  dst.cantidad=(dst.cantidad||0)+proceeds;
+  appendHistoriaPos(p); appendHistoriaPos(dst);
+  actionForm[posId]=null;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Venta registrada');
+};
+window.executeDeposit=function(medioId,posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  var qty=parseFloat(document.getElementById('dep-qty-'+posId).value)||0;
+  if(!qty){ toast('Falta monto',true); return; }
+  p.cantidad=(p.cantidad||0)+qty;
+  appendHistoriaPos(p);
+  actionForm[posId]=null;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Depósito registrado');
+};
+window.executeWithdraw=function(medioId,posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  var dstName=document.getElementById('wd-dst-'+posId).value;
+  var qty=parseFloat(document.getElementById('wd-qty-'+posId).value)||0;
+  var desc=(document.getElementById('wd-desc-'+posId).value||'').trim()||'Retiro de '+(p.nombre||'inversión');
+  if(!dstName||!qty){ toast('Faltan datos',true); return; }
+  if((p.cantidad||0)<qty-0.005){ toast('Saldo insuficiente',true); return; }
+  var amountMxn=qty;
+  if(p.moneda==='USD') amountMxn=qty*getUsdRate();
+  p.cantidad=(p.cantidad||0)-qty;
+  if(!state.gastos) state.gastos=[];
+  state.gastos.push({id:state.nextId++,tipo:'ingreso',desc:desc,cat:'Transferencia',mp:dstName,monto:amountMxn,fecha:new Date().toISOString().slice(0,10)});
+  appendHistoriaPos(p);
+  actionForm[posId]=null;
+  save(); renderInversion(); renderSaldos(); renderResumen(); renderBitacora();
+  toast('Retiro registrado en bitácora');
+};
+function renderBuyForm(medioId,p){
+  var liquids=liquidsInGroup(medioId,p.grupo,p.id);
+  if(!liquids.length) return '<div class="pos-action-form" style="color:var(--amber);font-size:12px">⚠ No hay posiciones líquidas en el grupo "'+esc(p.grupo||'(sin grupo)')+'". Crea una y márcala como líquida primero.</div>';
+  var srcOpts=liquids.map(function(l){
+    return '<option value="'+esc(l.id)+'">'+esc(l.nombre||'Líquido')+' · disponible '+fmt(l.cantidad||0)+' '+(l.moneda||'MXN')+'</option>';
+  }).join('');
+  var today=new Date().toISOString().slice(0,10);
+  return '<div class="pos-action-form">'+
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">🛒 Comprar más '+esc(p.nombre)+(p.moneda==='USD'?' (USD)':'')+'</div>'+
+    '<div class="fg fg4">'+
+      '<div class="field"><label>Tomar de</label><select id="buy-src-'+p.id+'">'+srcOpts+'</select></div>'+
+      '<div class="field"><label>Cantidad</label><input type="number" id="buy-qty-'+p.id+'" min="0" step="0.0001"></div>'+
+      '<div class="field"><label>Precio compra'+(p.moneda==='USD'?' (USD)':'')+'</label><input type="number" id="buy-price-'+p.id+'" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Fecha</label><input type="date" id="buy-fecha-'+p.id+'" value="'+today+'"></div>'+
+    '</div>'+
+    '<button class="btn btn-green" style="margin-top:8px" onclick="executeBuyMore('+medioId+',\''+p.id+'\')">Confirmar compra</button>'+
+  '</div>';
+}
+function renderSellForm(medioId,p){
+  var liquids=liquidsInGroup(medioId,p.grupo,p.id);
+  if(!liquids.length) return '<div class="pos-action-form" style="color:var(--amber);font-size:12px">⚠ No hay líquido destino en el grupo "'+esc(p.grupo||'(sin grupo)')+'".</div>';
+  var dstOpts=liquids.map(function(l){
+    return '<option value="'+esc(l.id)+'">'+esc(l.nombre||'Líquido')+'</option>';
+  }).join('');
+  return '<div class="pos-action-form">'+
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">💵 Vender '+esc(p.nombre)+' · tenencia: '+(p.cantidad||0)+'</div>'+
+    '<div class="fg fg3">'+
+      '<div class="field"><label>Cantidad a vender</label><input type="number" id="sell-qty-'+p.id+'" min="0" step="0.0001" max="'+(p.cantidad||0)+'"></div>'+
+      '<div class="field"><label>Precio venta'+(p.moneda==='USD'?' (USD)':'')+'</label><input type="number" id="sell-price-'+p.id+'" min="0" step="0.01" placeholder="actual: '+(p.precioActual||0)+'"></div>'+
+      '<div class="field"><label>Depositar a</label><select id="sell-dst-'+p.id+'">'+dstOpts+'</select></div>'+
+    '</div>'+
+    '<button class="btn btn-green" style="margin-top:8px" onclick="executeSell('+medioId+',\''+p.id+'\')">Confirmar venta</button>'+
+  '</div>';
+}
+function renderDepositForm(medioId,p){
+  return '<div class="pos-action-form">'+
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">⬆ Depositar (entrada externa) a '+esc(p.nombre)+'</div>'+
+    '<div class="fg" style="grid-template-columns:1fr">'+
+      '<div class="field"><label>Monto'+(p.moneda==='USD'?' (USD)':'')+'</label><input type="number" id="dep-qty-'+p.id+'" min="0" step="0.01"></div>'+
+    '</div>'+
+    '<button class="btn btn-green" style="margin-top:8px" onclick="executeDeposit('+medioId+',\''+p.id+'\')">Confirmar depósito</button>'+
+  '</div>';
+}
+function renderWithdrawForm(medioId,p){
+  var debits=debitableMedios();
+  if(!debits.length) return '<div class="pos-action-form" style="color:var(--amber);font-size:12px">⚠ No hay medios Débito/Digital/Efectivo configurados.</div>';
+  var dstOpts=debits.map(function(d){return '<option value="'+esc(d.nombre)+'">'+esc(d.icono||'💳')+' '+esc(d.nombre)+'</option>';}).join('');
+  return '<div class="pos-action-form">'+
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">⬇ Retirar de '+esc(p.nombre)+' a un medio débito (genera ingreso en bitácora)'+(p.moneda==='USD'?' — se convertirá a MXN al USD/MXN actual':'')+'</div>'+
+    '<div class="fg fg3">'+
+      '<div class="field"><label>Monto'+(p.moneda==='USD'?' (USD)':'')+'</label><input type="number" id="wd-qty-'+p.id+'" min="0" step="0.01" max="'+(p.cantidad||0)+'"></div>'+
+      '<div class="field"><label>Destino</label><select id="wd-dst-'+p.id+'">'+dstOpts+'</select></div>'+
+      '<div class="field"><label>Concepto</label><input type="text" id="wd-desc-'+p.id+'" placeholder="(opcional)"></div>'+
+    '</div>'+
+    '<button class="btn btn-green" style="margin-top:8px" onclick="executeWithdraw('+medioId+',\''+p.id+'\')">Confirmar retiro</button>'+
+  '</div>';
+}
 window.setUsdRate=function(v){
   var n=parseFloat(v); if(!n||n<=0){ toast('Tipo de cambio inválido',true); return; }
   globalConfig.usdRate=Math.round(n*10000)/10000;
@@ -1708,9 +1884,32 @@ function posCardHtml(medioId,p){
   var meta=SUBTIPOS_INV[st]||{label:'?',icon:'❓'};
   var ap=aportadoPos(p), val=valorPos(p), gan=val-ap;
   var pctP=ap>0?Math.round(gan/ap*10000)/100:0;
-  return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:11px 13px;margin-bottom:10px">'+
+  var canAct=(st==='Acciones'||st==='Cripto'||st==='RV');
+  var current=actionForm[p.id];
+  var actionsHtml='';
+  if(canAct){
+    if(p.liquid){
+      actionsHtml='<div class="pos-actions">'+
+        '<button class="pos-action-btn'+(current==='dep'?' active':'')+'" onclick="toggleActionForm(\''+p.id+'\',\'dep\')">⬆ Depositar</button>'+
+        '<button class="pos-action-btn'+(current==='wd'?' active':'')+'" onclick="toggleActionForm(\''+p.id+'\',\'wd\')">⬇ Retirar</button>'+
+        '<button class="pos-action-btn" onclick="toggleLiquid('+medioId+',\''+p.id+'\')" style="margin-left:auto">Quitar líquido</button>'+
+      '</div>';
+    } else {
+      actionsHtml='<div class="pos-actions">'+
+        '<button class="pos-action-btn'+(current==='buy'?' active':'')+'" onclick="toggleActionForm(\''+p.id+'\',\'buy\')">🛒 Comprar más</button>'+
+        '<button class="pos-action-btn'+(current==='sell'?' active':'')+'" onclick="toggleActionForm(\''+p.id+'\',\'sell\')">💵 Vender</button>'+
+        '<button class="pos-action-btn" onclick="toggleLiquid('+medioId+',\''+p.id+'\')" style="margin-left:auto" title="Marcar esta posición como cuenta líquida (cash) del grupo">💧 Marcar líquido</button>'+
+      '</div>';
+    }
+    if(current==='buy') actionsHtml+=renderBuyForm(medioId,p);
+    else if(current==='sell') actionsHtml+=renderSellForm(medioId,p);
+    else if(current==='dep') actionsHtml+=renderDepositForm(medioId,p);
+    else if(current==='wd') actionsHtml+=renderWithdrawForm(medioId,p);
+  }
+  return '<div style="background:var(--bg3);border:1px solid '+(p.liquid?'rgba(80,200,240,0.35)':'var(--border)')+';border-radius:8px;padding:11px 13px;margin-bottom:10px">'+
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap">'+
       '<span class="subtipo-badge subtipo-'+st+'">'+meta.label+'</span>'+
+      (p.liquid?'<span class="liquid-badge">💧 Líquido</span>':'')+
       '<input class="editable" value="'+esc(p.nombre||'')+'" placeholder="Nombre" style="font-size:13px;font-weight:500;min-width:80px;max-width:200px" onblur="updPos('+medioId+',\''+p.id+'\',\'nombre\',this.value)">'+
       '<input class="editable" value="'+esc(p.grupo||'')+'" placeholder="Grupo (opcional)" style="font-size:11px;color:var(--text3);min-width:80px;max-width:160px" onblur="updPos('+medioId+',\''+p.id+'\',\'grupo\',this.value)" title="Subcuenta o grupo">'+
       '<div style="flex:1;min-width:10px"></div>'+
@@ -1718,6 +1917,7 @@ function posCardHtml(medioId,p){
       '<button class="btn-del" onclick="delPos('+medioId+',\''+p.id+'\')">✕</button>'+
     '</div>'+
     posDetailsHtml(medioId,p)+
+    actionsHtml+
   '</div>';
 }
 function renderInversion(){
