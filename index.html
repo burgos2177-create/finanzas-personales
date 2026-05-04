@@ -496,6 +496,7 @@ onAuthStateChanged(auth, user => {
 var MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 var DIST_COLORS=['#1fd196','#5b9cf6','#f5a524','#f05c5c','#9b8ef7','#e879a8','#50c8f0','#a8d76b'];
 var TIPO_ICONS={Débito:'💳',Crédito:'💎',Efectivo:'💵',Digital:'📱',Apartado:'🏦','Inversión':'📈'};
+var INGRESO_OTROS=['Pago TC','Transferencia','Reembolso','Ajuste','Otro'];
 
 var DEFAULT_MEDIOS=[
   {id:1,nombre:'MP',tipo:'Digital',color:'#5b9cf6',icono:'📱',notas:'MercadoPago'},
@@ -692,6 +693,23 @@ function populateMediosSels(){
     }).join('');
   });
 }
+function buildIngresoCatOpts(cur){
+  var fuentes=state.ingresos.map(function(i){return i.concepto;});
+  var otros=INGRESO_OTROS.filter(function(o){return fuentes.indexOf(o)<0;});
+  var html='';
+  if(cur && fuentes.indexOf(cur)<0 && otros.indexOf(cur)<0){
+    html+='<optgroup label="Actual"><option value="'+esc(cur)+'" selected>'+esc(cur)+'</option></optgroup>';
+  }
+  if(fuentes.length){
+    html+='<optgroup label="Fuentes teóricas">';
+    fuentes.forEach(function(f){ html+='<option value="'+esc(f)+'"'+(f===cur?' selected':'')+'>'+esc(f)+'</option>'; });
+    html+='</optgroup>';
+  }
+  html+='<optgroup label="Otros (sin fuente)">';
+  otros.forEach(function(o){ html+='<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+esc(o)+'</option>'; });
+  html+='</optgroup>';
+  return html;
+}
 function populateCatSel(){
   var el=document.getElementById('bit-cat-sel'); if(!el) return;
   var tipoEl=document.getElementById('bit-tipo');
@@ -700,9 +718,7 @@ function populateCatSel(){
   var cur=el.value;
   if(tipo==='ingreso'){
     if(lbl) lbl.textContent='Fuente';
-    el.innerHTML=state.ingresos.map(function(i){
-      return '<option value="'+esc(i.concepto)+'"'+(i.concepto===cur?' selected':'')+'>'+esc(i.concepto)+'</option>';
-    }).join('') || '<option value="">— Sin fuentes —</option>';
+    el.innerHTML=buildIngresoCatOpts(cur);
   } else {
     if(lbl) lbl.textContent='Categoría';
     el.innerHTML=cats.map(function(c){
@@ -1081,8 +1097,9 @@ function renderBitacora(){
   document.getElementById('bit-list').innerHTML=sorted.map(function(g){
     var t=gTipo(g);
     var isIng=(t==='ingreso');
-    var optsList=isIng?state.ingresos.map(function(i){return {n:i.concepto};}):cats.map(function(c){return {n:c.nombre};});
-    var catOpts=optsList.map(function(o){return '<option value="'+esc(o.n)+'"'+(o.n===g.cat?' selected':'')+'>'+esc(o.n)+'</option>';}).join('');
+    var catOpts=isIng
+      ? buildIngresoCatOpts(g.cat)
+      : cats.map(function(c){return '<option value="'+esc(c.nombre)+'"'+(c.nombre===g.cat?' selected':'')+'>'+esc(c.nombre)+'</option>';}).join('');
     var mpOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===g.mp?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
     var mpCol=medioColor(g.mp||'');
     var dotCol=isIng?'#1fd196':catColor(g.cat);
