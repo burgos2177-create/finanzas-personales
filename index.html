@@ -341,9 +341,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             </div>
             <div class="field"><label>Descripción</label><input type="text" id="bit-desc" placeholder="Ej. Cena restaurante"></div>
             <div class="field"><label id="bit-cat-lbl">Categoría</label><select id="bit-cat-sel"></select></div>
-            <div class="field"><label>Medio de pago</label><select id="bit-mp-sel"></select></div>
+            <div class="field"><label>Medio de pago</label><select id="bit-mp-sel" onchange="syncBitMsiVisibility()"></select></div>
             <div class="field"><label>Monto ($)</label><input type="number" id="bit-monto" placeholder="0" min="0" step="0.01"></div>
             <div class="field"><label>Fecha</label><input type="date" id="bit-fecha"></div>
+          </div>
+          <div id="bit-msi-row" style="display:none;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border:1px solid rgba(91,156,246,0.25);border-radius:8px;margin-bottom:12px;flex-wrap:wrap">
+            <span style="font-size:12px;color:var(--blue)">💳 TC detectada — registrar como compra a meses (opcional):</span>
+            <input id="bit-msi-meses" type="number" placeholder="N° meses" min="0" max="60" style="width:100px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--mono);outline:none;text-align:right">
+            <select id="bit-msi-tipo" class="sel-inline" onchange="document.getElementById('bit-msi-int-wrap').style.display=this.value==='MSC'?'inline-flex':'none'" style="font-size:12px"><option value="MSI">MSI</option><option value="MSC">MSC</option></select>
+            <span id="bit-msi-int-wrap" style="display:none;align-items:center;gap:4px"><input id="bit-msi-int" type="number" placeholder="% anual" min="0" step="0.01" style="width:90px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--mono);outline:none;text-align:right"></span>
           </div>
           <button class="btn btn-green" onclick="addGasto()">+ Registrar</button>
         </div>
@@ -602,7 +608,23 @@ async function loadMesFromFirestore(){
       var ingresos=(prev.data.ingresos||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
       var egresos=(prev.data.egresos||[]).map(function(o){bump(o); var c=JSON.parse(JSON.stringify(o)); c.gastado=0; return c;});
       var distribucion=(prev.data.distribucion||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
-      return { ingresos:ingresos, egresos:egresos, distribucion:distribucion, gastos:[], saldosIniciales:{}, nextId:maxId };
+      // Calcular saldos finales del mes anterior y arrastrarlos como iniciales
+      var prevMov={};
+      (prev.data.gastos||[]).forEach(function(g){
+        if(!g.mp) return;
+        if(!prevMov[g.mp]) prevMov[g.mp]={ing:0,egr:0};
+        if((g.tipo||'egreso')==='ingreso') prevMov[g.mp].ing+=g.monto; else prevMov[g.mp].egr+=g.monto;
+      });
+      var newSaldosIni={};
+      var prevIni=prev.data.saldosIniciales||{};
+      medios.forEach(function(med){
+        var ini=prevIni[med.nombre]||0;
+        var mv=prevMov[med.nombre]||{ing:0,egr:0};
+        var fin = med.tipo==='Crédito' ? ini+mv.egr-mv.ing : ini+mv.ing-mv.egr;
+        fin=Math.round(fin*100)/100;
+        if(fin!==0) newSaldosIni[med.nombre]=fin;
+      });
+      return { ingresos:ingresos, egresos:egresos, distribucion:distribucion, gastos:[], saldosIniciales:newSaldosIni, nextId:maxId };
     }
   } catch(e) { console.error('Error heredando mes anterior:',e); }
   return JSON.parse(JSON.stringify(DEFAULT_MES_STATE));
@@ -683,7 +705,18 @@ function populateCatSel(){
     }).join('');
   }
 }
-window.syncBitTipo=populateCatSel;
+window.syncBitTipo=function(){ populateCatSel(); syncBitMsiVisibility(); };
+window.syncBitMsiVisibility=function(){
+  var tipoEl=document.getElementById('bit-tipo'), mpEl=document.getElementById('bit-mp-sel'), row=document.getElementById('bit-msi-row');
+  if(!tipoEl||!mpEl||!row) return;
+  var medio=medios.find(function(x){return x.nombre===mpEl.value;});
+  var show=(tipoEl.value==='egreso' && medio && medio.tipo==='Crédito');
+  row.style.display=show?'flex':'none';
+  if(!show){
+    var mesesEl=document.getElementById('bit-msi-meses'); if(mesesEl) mesesEl.value='';
+    var intEl=document.getElementById('bit-msi-int'); if(intEl) intEl.value='';
+  }
+};
 
 // ════════════════════════════════════════════════
 //  NAV
@@ -940,7 +973,7 @@ window.delDist=function(id){ state.distribucion=state.distribucion.filter(functi
 // ════════════════════════════════════════════════
 function renderBitacora(){
   document.getElementById('lbl-bit').innerHTML=mesLabel();
-  populateCatSel(); populateMediosSels();
+  populateCatSel(); populateMediosSels(); syncBitMsiVisibility();
   var fechaEl=document.getElementById('bit-fecha');
   if(!fechaEl.value){ var n=new Date(); fechaEl.value=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0'); }
   var gastos=state.gastos||[];
@@ -1055,9 +1088,23 @@ window.addGasto=function(){
   if(!desc||!monto) return;
   if(!state.gastos) state.gastos=[];
   state.gastos.push({id:state.nextId++,tipo:tipo,desc:desc,cat:cat,mp:mp,monto:monto,fecha:fecha});
+  var compraCreada=false;
+  if(tipo==='egreso'){
+    var medio=medios.find(function(x){return x.nombre===mp;});
+    if(medio && medio.tipo==='Crédito'){
+      var meses=parseInt(document.getElementById('bit-msi-meses').value,10)||0;
+      if(meses>0){
+        var cTipo=document.getElementById('bit-msi-tipo').value||'MSI';
+        var cInt=parseFloat(document.getElementById('bit-msi-int').value)||0;
+        compras.push({id:state.nextId++,mp:mp,desc:desc,montoTotal:monto,meses:meses,tipo:cTipo,interes:cTipo==='MSC'?cInt:0,pagosHechos:0,fechaInicio:fecha});
+        document.getElementById('bit-msi-meses').value=''; document.getElementById('bit-msi-int').value='';
+        compraCreada=true;
+      }
+    }
+  }
   document.getElementById('bit-desc').value=''; document.getElementById('bit-monto').value='';
   save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos();
-  toast(tipo==='ingreso'?'Ingreso registrado':'Gasto registrado');
+  toast(compraCreada?'Gasto + compra a meses registrada':(tipo==='ingreso'?'Ingreso registrado':'Gasto registrado'));
 };
 window.updGasto=function(id,f,v){
   var g=state.gastos.find(function(g){return g.id===id;}); if(!g) return;
@@ -1227,7 +1274,8 @@ function renderSaldos(){
   medios.forEach(function(m){
     var mv=mov[m.nombre]||{ing:0,egr:0};
     if(m.tipo==='Crédito'){
-      var aPagar=mv.egr-mv.ing;
+      var deudaIni=saldosIni[m.nombre]||0;
+      var aPagar=deudaIni+mv.egr-mv.ing;
       if(aPagar>0) totDeuda+=aPagar;
       totLinea+=(m.lineaCredito||0);
       totLineaUsada+=Math.max(aPagar,0);
@@ -1254,14 +1302,17 @@ function renderSaldos(){
     var statsHtml, footer='';
     if(isCred){
       var linea=m.lineaCredito||0;
+      var deudaIni=saldosIni[m.nombre]||0;
       var cargos=mv.egr, abonos=mv.ing;
-      var aPagar=cargos-abonos;
+      var aPagar=deudaIni+cargos-abonos;
       var disp=linea-aPagar;
       var pctU=linea>0?Math.round(aPagar/linea*100):0;
       var pctCls=pctU>=100?'over':pctU>=80?'warn':'';
       statsHtml=
         '<div class="saldo-stat"><div class="saldo-stat-lbl">Línea autorizada</div>'+
           '<input type="number" value="'+linea+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)"></div>'+
+        '<div class="saldo-stat" title="Deuda traída de meses anteriores. No cuenta como cargo del mes."><div class="saldo-stat-lbl">Deuda heredada</div>'+
+          '<input type="number" value="'+deudaIni+'" step="0.01" min="0" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'+
         saldoStat('Cargos del mes',fmt(cargos),'red')+
         saldoStat('Abonos / pagos',fmt(abonos),'green')+
         saldoStat('Saldo a pagar',fmt(aPagar),aPagar>0?'red':'green')+
