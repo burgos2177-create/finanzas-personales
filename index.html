@@ -110,6 +110,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .saldo-stat input:focus{border-color:var(--green2)}
 .mp-edit-icono{width:38px;height:38px;border-radius:9px;border:1px solid transparent;text-align:center;font-size:20px;outline:none;flex-shrink:0;cursor:text}
 .mp-edit-icono:focus{border-color:var(--border2)}
+.inv-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+.inv-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.inv-name{font-size:15px;font-weight:600;letter-spacing:-0.01em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.inv-sub{font-size:11px;color:var(--text3);margin-top:3px}
+.inv-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:8px}
+.inv-stat{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 11px}
+.inv-stat-lbl{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px}
+.inv-stat-val{font-size:15px;font-weight:600;font-family:var(--mono);letter-spacing:-0.01em}
+.inv-stat-val.green{color:var(--green)}.inv-stat-val.red{color:var(--red)}.inv-stat-val.amber{color:var(--amber)}.inv-stat-val.blue{color:var(--blue)}
+.inv-stat input{width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:14px;padding:4px 7px;outline:none;text-align:right}
+.inv-stat input:focus{border-color:var(--green2)}
+.inv-chart-wrap{height:130px;margin-top:10px;position:relative}
+.subtipo-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;letter-spacing:0.04em;text-transform:uppercase}
+.subtipo-PF{background:rgba(91,156,246,0.15);color:var(--blue)}
+.subtipo-RV{background:rgba(155,142,247,0.15);color:var(--purple)}
+.subtipo-Acciones{background:rgba(31,209,150,0.15);color:var(--green)}
+.subtipo-Cripto{background:rgba(245,165,36,0.15);color:var(--amber)}
 .field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px}
 .field input,.field select{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:13px;font-family:var(--font);outline:none;transition:border-color 0.15s}
 .field input:focus,.field select:focus{border-color:var(--green2)}
@@ -234,6 +251,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-lbl">Visión</div>
       <div class="nav-item active" onclick="nav('resumen')"><span class="nav-icon">📊</span>Resumen</div>
       <div class="nav-item" onclick="nav('saldos')"><span class="nav-icon">🏦</span>Saldos</div>
+      <div class="nav-item" onclick="nav('inversion')"><span class="nav-icon">📈</span>Inversión</div>
       <div class="nav-lbl">Entradas</div>
       <div class="nav-item" onclick="nav('ingresos')"><span class="nav-icon">💵</span>Ingresos</div>
       <div class="nav-lbl">Salidas</div>
@@ -274,6 +292,31 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Configura saldo inicial o línea de crédito. Usa los botones rápidos para registrar cargos/abonos sin ir a Bitácora.</div>
         <div class="mg" id="saldos-summary"></div>
         <div id="saldos-list"></div>
+      </div>
+
+      <!-- INVERSIÓN -->
+      <div id="s-inversion" class="section">
+        <div class="s-heading">Inversión</div>
+        <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Inversiones globales (no atadas a un mes). Los medios tipo "Inversión" aparecen aquí; configura subtipo y campos para calcular el saldo.</div>
+        <div class="mg" id="inv-summary"></div>
+        <div id="inv-list"></div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Agregar inversión</div></div>
+          <div class="fg fg3">
+            <div class="field"><label>Nombre</label><input type="text" id="inv-nombre" placeholder="Ej. CETES, GBM, BTC"></div>
+            <div class="field"><label>Subtipo</label>
+              <select id="inv-subtipo" onchange="syncInvForm()">
+                <option value="PF">Plazo fijo</option>
+                <option value="RV">Renta variable / Fondos</option>
+                <option value="Acciones">Acciones</option>
+                <option value="Cripto">Criptomonedas</option>
+              </select>
+            </div>
+            <div class="field"><label>Color</label><input type="color" id="inv-color" value="#9b8ef7"></div>
+          </div>
+          <div id="inv-fields-container"></div>
+          <button class="btn btn-green" onclick="addInversion()" style="margin-top:8px">+ Agregar inversión</button>
+        </div>
       </div>
 
       <!-- INGRESOS -->
@@ -497,6 +540,12 @@ var MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Se
 var DIST_COLORS=['#1fd196','#5b9cf6','#f5a524','#f05c5c','#9b8ef7','#e879a8','#50c8f0','#a8d76b'];
 var TIPO_ICONS={Débito:'💳',Crédito:'💎',Efectivo:'💵',Digital:'📱',Apartado:'🏦','Inversión':'📈'};
 var INGRESO_OTROS=['Pago TC','Transferencia','Reembolso','Ajuste','Otro'];
+var SUBTIPOS_INV={
+  PF:{label:'Plazo fijo',icon:'🏦',color:'#5b9cf6'},
+  RV:{label:'Renta variable',icon:'📊',color:'#9b8ef7'},
+  Acciones:{label:'Acciones',icon:'📈',color:'#1fd196'},
+  Cripto:{label:'Criptomoneda',icon:'₿',color:'#f5a524'}
+};
 
 var DEFAULT_MEDIOS=[
   {id:1,nombre:'MP',tipo:'Digital',color:'#5b9cf6',icono:'📱',notas:'MercadoPago'},
@@ -742,12 +791,12 @@ window.syncBitMsiVisibility=function(){
 // ════════════════════════════════════════════════
 //  NAV
 // ════════════════════════════════════════════════
-var NAV_ORDER=['resumen','saldos','ingresos','egresos','distribucion','bitacora','medios','suscripciones','categorias'];
+var NAV_ORDER=['resumen','saldos','inversion','ingresos','egresos','distribucion','bitacora','medios','suscripciones','categorias'];
 function nav(name){
   document.querySelectorAll('.section').forEach(function(el){el.classList.remove('active');});
   document.querySelectorAll('.nav-item').forEach(function(el,i){el.classList.toggle('active',i===NAV_ORDER.indexOf(name));});
   document.getElementById('s-'+name).classList.add('active');
-  ({resumen:renderResumen,saldos:renderSaldos,ingresos:renderIngresos,egresos:renderEgresos,
+  ({resumen:renderResumen,saldos:renderSaldos,inversion:renderInversion,ingresos:renderIngresos,egresos:renderEgresos,
     distribucion:renderDist,bitacora:renderBitacora,medios:renderMedios,
     suscripciones:renderSubs,categorias:renderCats}[name]||function(){})();
 }
@@ -860,11 +909,14 @@ function renderResumen(){
   var pctEgr=egrT>0?Math.round(egrR/egrT*100):0;
   var balReal=ingR-egrR;
   document.getElementById('lbl-resumen').innerHTML=mesLabel();
+  var totInv=totalInversiones(), aportInv=totalAportadoInv();
+  var ganInv=totInv-aportInv;
   document.getElementById('dash-metrics').innerHTML=
     mc('Ingresos',fmt(ingR),'green','T '+fmt(ingT)+' · '+pctIng+'%')+
     mc('Egresos',fmt(egrR),egrR>egrT?'red':'red','T '+fmt(egrT)+' · '+pctEgr+'%')+
     mc('Disponible teórico',fmt(disp),disp<0?'red':'amber',(ingT>0?Math.round(disp/ingT*100):0)+'% del ingreso')+
-    mc('Balance real',fmt(balReal),balReal<0?'red':'green','ingresos − egresos');
+    mc('Balance real',fmt(balReal),balReal<0?'red':'green','ingresos − egresos')+
+    (totInv>0?mc('Inversiones',fmt(totInv),'blue',(ganInv>=0?'+':'')+fmt(ganInv)+' vs aportado'):'');
   var alerts='';
   if(disp<0) alerts+='<div class="alert alert-danger">⚠ Los egresos teóricos superan los ingresos teóricos en '+fmt(Math.abs(disp))+'</div>';
   if(ingT>0 && pctIng<80 && ingR>0) alerts+='<div class="alert alert-warn">⚠ Ingresos reales al '+pctIng+'% del teórico ('+fmt(ingT-ingR)+' pendiente)</div>';
@@ -1230,6 +1282,118 @@ window.addMedio=function(){
 window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;}); save(); renderMedios(); renderSaldos(); populateMediosSels(); toast('Eliminado'); };
 
 // ════════════════════════════════════════════════
+//  INVERSIÓN
+// ════════════════════════════════════════════════
+function valorInversion(m, fechaRef){
+  var ref = fechaRef ? new Date(fechaRef) : new Date();
+  if(m.subtipo==='PF'){
+    var inicio = m.fechaInicio ? new Date(m.fechaInicio) : ref;
+    var diasTrans = Math.max(0, (ref - inicio)/(1000*60*60*24));
+    var maxDias = (m.plazoMeses||0) * 30.4375;
+    var diasEf = maxDias>0 ? Math.min(diasTrans, maxDias) : diasTrans;
+    var tasa = (m.tasaAnual||0)/100;
+    return (m.montoInicial||0) * (1 + tasa * diasEf / 365);
+  }
+  if(m.subtipo==='RV') return m.valorActual||0;
+  if(m.subtipo==='Acciones'||m.subtipo==='Cripto') return (m.cantidad||0)*(m.precioActual||0);
+  return 0;
+}
+function aportadoInv(m){
+  if(m.subtipo==='PF') return m.montoInicial||0;
+  if(m.subtipo==='RV') return m.montoInvertido||0;
+  if(m.subtipo==='Acciones'||m.subtipo==='Cripto') return (m.cantidad||0)*(m.precioCompra||0);
+  return 0;
+}
+function totalInversiones(){
+  return medios.filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){return a+valorInversion(m);},0);
+}
+function totalAportadoInv(){
+  return medios.filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){return a+aportadoInv(m);},0);
+}
+function appendHistoria(m){
+  if(!m.historia) m.historia=[];
+  var hoy=new Date().toISOString().slice(0,10);
+  var v=valorInversion(m);
+  var last=m.historia[m.historia.length-1];
+  if(last && last.fecha===hoy) last.valor=v;
+  else m.historia.push({fecha:hoy, valor:v});
+}
+window.syncInvForm=function(){
+  var subtipo=document.getElementById('inv-subtipo').value;
+  var container=document.getElementById('inv-fields-container');
+  if(!container) return;
+  var today=new Date().toISOString().slice(0,10);
+  var html='';
+  if(subtipo==='PF'){
+    html='<div class="fg fg4" style="margin-top:10px"><div class="field"><label>Monto inicial ($)</label><input type="number" id="inv-pf-monto" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Tasa anual (%)</label><input type="number" id="inv-pf-tasa" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Plazo (meses)</label><input type="number" id="inv-pf-plazo" min="1" placeholder="Ej. 12"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-pf-fecha" value="'+today+'"></div></div>';
+  } else if(subtipo==='RV'){
+    html='<div class="fg fg3" style="margin-top:10px"><div class="field"><label>Monto invertido ($)</label><input type="number" id="inv-rv-mi" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Valor actual ($)</label><input type="number" id="inv-rv-va" min="0" step="0.01" placeholder="Si vacío = monto invertido"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-rv-fecha" value="'+today+'"></div></div>';
+  } else if(subtipo==='Acciones'){
+    html='<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Ticker</label><input type="text" id="inv-ac-ticker" placeholder="Ej. AAPL"></div>'+
+      '<div class="field"><label>Cantidad</label><input type="number" id="inv-ac-cant" min="0" step="0.0001"></div>'+
+      '<div class="field"><label>Precio compra ($)</label><input type="number" id="inv-ac-pc" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Precio actual ($)</label><input type="number" id="inv-ac-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-ac-fecha" value="'+today+'"></div></div>';
+  } else if(subtipo==='Cripto'){
+    html='<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Símbolo</label><input type="text" id="inv-cr-sim" placeholder="Ej. BTC"></div>'+
+      '<div class="field"><label>Cantidad</label><input type="number" id="inv-cr-cant" min="0" step="0.00000001"></div>'+
+      '<div class="field"><label>Precio compra ($)</label><input type="number" id="inv-cr-pc" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Precio actual ($)</label><input type="number" id="inv-cr-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-cr-fecha" value="'+today+'"></div></div>';
+  }
+  container.innerHTML=html;
+};
+window.addInversion=function(){
+  var nombre=document.getElementById('inv-nombre').value.trim();
+  var subtipo=document.getElementById('inv-subtipo').value;
+  var color=document.getElementById('inv-color').value;
+  if(!nombre){ toast('Falta nombre',true); return; }
+  if(medios.find(function(x){return x.nombre.toLowerCase()===nombre.toLowerCase();})){ toast('Nombre ya existe',true); return; }
+  var m={id:state.nextId++,nombre:nombre,tipo:'Inversión',color:color,icono:SUBTIPOS_INV[subtipo].icon,notas:'',subtipo:subtipo,historia:[]};
+  if(subtipo==='PF'){
+    m.montoInicial=parseFloat(document.getElementById('inv-pf-monto').value)||0;
+    m.tasaAnual=parseFloat(document.getElementById('inv-pf-tasa').value)||0;
+    m.plazoMeses=parseInt(document.getElementById('inv-pf-plazo').value,10)||0;
+    m.fechaInicio=document.getElementById('inv-pf-fecha').value||new Date().toISOString().slice(0,10);
+  } else if(subtipo==='RV'){
+    m.montoInvertido=parseFloat(document.getElementById('inv-rv-mi').value)||0;
+    m.valorActual=parseFloat(document.getElementById('inv-rv-va').value)||m.montoInvertido;
+    m.fechaInicio=document.getElementById('inv-rv-fecha').value||new Date().toISOString().slice(0,10);
+  } else if(subtipo==='Acciones'){
+    m.ticker=(document.getElementById('inv-ac-ticker').value||'').trim().toUpperCase();
+    m.cantidad=parseFloat(document.getElementById('inv-ac-cant').value)||0;
+    m.precioCompra=parseFloat(document.getElementById('inv-ac-pc').value)||0;
+    m.precioActual=parseFloat(document.getElementById('inv-ac-pa').value)||m.precioCompra;
+    m.fechaInicio=document.getElementById('inv-ac-fecha').value||new Date().toISOString().slice(0,10);
+  } else if(subtipo==='Cripto'){
+    m.simbolo=(document.getElementById('inv-cr-sim').value||'').trim().toUpperCase();
+    m.cantidad=parseFloat(document.getElementById('inv-cr-cant').value)||0;
+    m.precioCompra=parseFloat(document.getElementById('inv-cr-pc').value)||0;
+    m.precioActual=parseFloat(document.getElementById('inv-cr-pa').value)||m.precioCompra;
+    m.fechaInicio=document.getElementById('inv-cr-fecha').value||new Date().toISOString().slice(0,10);
+  }
+  m.historia=[{fecha:m.fechaInicio,valor:aportadoInv(m)}];
+  if(Math.abs(valorInversion(m)-aportadoInv(m))>0.01) m.historia.push({fecha:new Date().toISOString().slice(0,10),valor:valorInversion(m)});
+  medios.push(m);
+  document.getElementById('inv-nombre').value=''; syncInvForm();
+  save(); renderInversion(); renderMedios(); renderSaldos(); renderResumen();
+  toast('Inversión agregada');
+};
+window.updInversion=function(id,f,v){
+  var m=medios.find(function(x){return x.id===id;}); if(!m) return;
+  var oldV=valorInversion(m);
+  if(['valorActual','precioActual','precioCompra','montoInicial','montoInvertido','cantidad','tasaAnual','plazoMeses'].indexOf(f)>=0) m[f]=parseFloat(v)||0;
+  else m[f]=v;
+  if(Math.abs(valorInversion(m)-oldV)>0.01) appendHistoria(m);
+  save(); renderInversion(); renderSaldos(); renderResumen();
+};
+
+// ════════════════════════════════════════════════
 //  COMPRAS A MESES (MSI/MSC)
 // ════════════════════════════════════════════════
 function pagoMensual(c){
@@ -1265,6 +1429,92 @@ window.payCompra=function(id,delta){
   c.pagosHechos=Math.max(0,Math.min((c.meses||0),(c.pagosHechos||0)+delta));
   save(); renderSaldos();
 };
+
+function renderInversion(){
+  var lblEl=document.getElementById('inv-summary'); if(!lblEl) return;
+  var invs=medios.filter(function(m){return m.tipo==='Inversión';});
+  var totAport=invs.reduce(function(a,m){return a+aportadoInv(m);},0);
+  var totActual=invs.reduce(function(a,m){return a+valorInversion(m);},0);
+  var ganancia=totActual-totAport;
+  var pct=totAport>0?Math.round(ganancia/totAport*10000)/100:0;
+  document.getElementById('inv-summary').innerHTML=
+    mc('Aportado total',fmt(totAport),'',invs.length+' inversiones')+
+    mc('Valor actual',fmt(totActual),totActual>=totAport?'green':'red')+
+    mc('Ganancia / Pérdida',(ganancia>=0?'+':'')+fmt(ganancia),ganancia>=0?'green':'red')+
+    mc('Rendimiento',(pct>=0?'+':'')+pct+'%',pct>=0?'green':'red');
+
+  if(!invs.length){
+    document.getElementById('inv-list').innerHTML='<div class="empty">Sin inversiones aún. Agrega una abajo.</div>';
+    syncInvForm();
+    return;
+  }
+  document.getElementById('inv-list').innerHTML=invs.map(function(m){
+    var st=m.subtipo||'?';
+    var meta=SUBTIPOS_INV[st]||{label:'Sin clasificar',icon:'❓'};
+    var aport=aportadoInv(m), actual=valorInversion(m), gan=actual-aport;
+    var pctI=aport>0?Math.round(gan/aport*10000)/100:0;
+    var details='';
+    if(st==='PF'){
+      var inicio=m.fechaInicio?new Date(m.fechaInicio):null;
+      var dias=inicio?Math.floor((Date.now()-inicio)/(1000*60*60*24)):0;
+      var venc=inicio&&m.plazoMeses?new Date(inicio.getTime()+m.plazoMeses*30.4375*24*60*60*1000):null;
+      details='<div class="inv-stat-grid">'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Monto inicial</div><input type="number" value="'+(m.montoInicial||0)+'" step="0.01" onchange="updInversion('+m.id+',\'montoInicial\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Tasa anual %</div><input type="number" value="'+(m.tasaAnual||0)+'" step="0.01" onchange="updInversion('+m.id+',\'tasaAnual\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Plazo (meses)</div><input type="number" value="'+(m.plazoMeses||0)+'" min="0" onchange="updInversion('+m.id+',\'plazoMeses\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Días transcurridos</div><div class="inv-stat-val">'+dias+'</div></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Vencimiento</div><div class="inv-stat-val" style="font-size:13px">'+(venc?venc.toLocaleDateString('es-MX'):'—')+'</div></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Saldo hoy</div><div class="inv-stat-val green">'+fmt(actual)+'</div></div>'+
+      '</div>';
+    } else if(st==='RV'){
+      details='<div class="inv-stat-grid">'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Monto invertido</div><input type="number" value="'+(m.montoInvertido||0)+'" step="0.01" onchange="updInversion('+m.id+',\'montoInvertido\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Valor actual</div><input type="number" value="'+(m.valorActual||0)+'" step="0.01" onchange="updInversion('+m.id+',\'valorActual\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Fecha inicio</div><div class="inv-stat-val" style="font-size:13px">'+(m.fechaInicio?fmtDate(m.fechaInicio):'—')+'</div></div>'+
+      '</div>';
+    } else if(st==='Acciones'||st==='Cripto'){
+      var symLbl=st==='Acciones'?'Ticker':'Símbolo';
+      var symField=st==='Acciones'?'ticker':'simbolo';
+      var symVal=m[symField]||'';
+      details='<div class="inv-stat-grid">'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">'+symLbl+'</div><input type="text" value="'+esc(symVal)+'" onchange="updInversion('+m.id+',\''+symField+'\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Cantidad</div><input type="number" value="'+(m.cantidad||0)+'" step="0.00000001" onchange="updInversion('+m.id+',\'cantidad\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Precio compra</div><input type="number" value="'+(m.precioCompra||0)+'" step="0.01" onchange="updInversion('+m.id+',\'precioCompra\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Precio actual</div><input type="number" value="'+(m.precioActual||0)+'" step="0.01" onchange="updInversion('+m.id+',\'precioActual\',this.value)"></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Aportado</div><div class="inv-stat-val">'+fmt(aport)+'</div></div>'+
+        '<div class="inv-stat"><div class="inv-stat-lbl">Valor actual</div><div class="inv-stat-val green">'+fmt(actual)+'</div></div>'+
+      '</div>';
+    } else {
+      details='<div class="alert alert-warn"><span>⚠</span> Subtipo no configurado. Edita el medio en "Medios de Pago" o elimínalo.</div>';
+    }
+    var historia=m.historia||[];
+    var chartHtml=historia.length>1?'<div class="inv-chart-wrap"><canvas id="inv-chart-'+m.id+'"></canvas></div>':'';
+    return '<div class="inv-card">'+
+      '<div class="inv-head">'+
+        '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+';width:44px;height:44px;border-radius:10px;font-size:20px">'+(m.icono||meta.icon)+'</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div class="inv-name" style="color:'+m.color+'">'+esc(m.nombre)+'<span class="subtipo-badge subtipo-'+st+'">'+meta.label+'</span></div>'+
+          '<div class="inv-sub">Aportado '+fmt(aport)+' · Actual <span style="color:'+(gan>=0?'var(--green)':'var(--red)')+';font-weight:500">'+fmt(actual)+'</span> · '+(gan>=0?'+':'')+fmt(gan)+' ('+(pctI>=0?'+':'')+pctI+'%)</div>'+
+        '</div>'+
+        '<button class="btn-del" onclick="delMedio('+m.id+')">✕</button>'+
+      '</div>'+
+      details+
+      chartHtml+
+    '</div>';
+  }).join('');
+  syncInvForm();
+  // Render charts
+  invs.forEach(function(m){
+    var historia=m.historia||[];
+    if(historia.length<=1) return;
+    var ctx=document.getElementById('inv-chart-'+m.id); if(!ctx) return;
+    var sorted=historia.slice().sort(function(a,b){return (a.fecha||'').localeCompare(b.fecha||'');});
+    new Chart(ctx,{type:'line',data:{
+      labels:sorted.map(function(h){var p=(h.fecha||'').split('-');return p[2]+'/'+p[1]+'/'+(p[0]||'').slice(2);}),
+      datasets:[{label:m.nombre,data:sorted.map(function(h){return h.valor;}),borderColor:m.color,backgroundColor:m.color+'1a',fill:true,tension:0.3,pointRadius:2,pointBackgroundColor:m.color,borderWidth:2}]
+    },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return fmt(v);},color:'#555b6e',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10}},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+  });
+}
 
 // ════════════════════════════════════════════════
 //  TRANSFERENCIAS (Pago de tarjeta de crédito)
@@ -1333,11 +1583,14 @@ function renderSaldos(){
   });
   var neto=totActivos-totDeuda;
   var pctLinea=totLinea>0?Math.round(totLineaUsada/totLinea*100):0;
+  var totInv=totalInversiones();
+  var liquidos=totActivos-medios.filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){var ini=saldosIni[m.nombre]||0; var mv=mov[m.nombre]||{ing:0,egr:0}; return a+ini+mv.ing-mv.egr;},0);
+  var patrimonio=liquidos+totInv-totDeuda;
   document.getElementById('saldos-summary').innerHTML=
-    mc('Activos (no crédito)',fmt(totActivos),totActivos<0?'red':'green',medios.filter(function(m){return m.tipo!=='Crédito';}).length+' cuentas')+
-    mc('Deuda total',fmt(totDeuda),totDeuda>0?'red':'',medios.filter(function(m){return m.tipo==='Crédito';}).length+' tarjetas crédito')+
-    mc('Patrimonio neto',fmt(neto),neto<0?'red':'green','activos − deuda')+
-    mc('Uso línea total',pctLinea+'%',pctLinea>=80?'red':pctLinea>=50?'amber':'blue',fmt(totLineaUsada)+' / '+fmt(totLinea));
+    mc('Líquidos',fmt(liquidos),liquidos<0?'red':'green',medios.filter(function(m){return m.tipo!=='Crédito'&&m.tipo!=='Inversión';}).length+' cuentas')+
+    mc('Inversiones',fmt(totInv),'blue',medios.filter(function(m){return m.tipo==='Inversión';}).length+' activos')+
+    mc('Deuda total',fmt(totDeuda),totDeuda>0?'red':'',medios.filter(function(m){return m.tipo==='Crédito';}).length+' tarjetas')+
+    mc('Patrimonio neto',fmt(patrimonio),patrimonio<0?'red':'green','líquidos + inversión − deuda');
 
   var html=medios.map(function(m){
     var mv=mov[m.nombre]||{ing:0,egr:0};
@@ -1371,6 +1624,15 @@ function renderSaldos(){
       var advToggle='<button class="btn" style="padding:3px 9px;font-size:11px;color:var(--text3)" onclick="toggleAdvancedTC(\''+esc(m.nombre)+'\')" title="Acciones avanzadas">'+(advOpen?'▼':'⚙')+'</button>';
       var bulkBtn=(advOpen && cargos>0)?'<button class="btn" style="padding:4px 10px;font-size:11px;color:var(--amber);border-color:rgba(245,165,36,0.3)" onclick="cargosTCToDeuda('+m.id+')" title="Mueve todos los cargos del mes a Deuda heredada">Mover cargos → deuda</button>':'';
       footer='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div>'+advToggle+bulkBtn+'</div>';
+    } else if(m.tipo==='Inversión'){
+      var aportInv=aportadoInv(m), valInv=valorInversion(m), ganInv=valInv-aportInv;
+      var pctInv=aportInv>0?Math.round(ganInv/aportInv*10000)/100:0;
+      statsHtml=
+        saldoStat('Aportado',fmt(aportInv))+
+        saldoStat('Valor actual',fmt(valInv),ganInv>=0?'green':'red')+
+        saldoStat('Ganancia',(ganInv>=0?'+':'')+fmt(ganInv),ganInv>=0?'green':'red')+
+        saldoStat('Rendimiento',(pctInv>=0?'+':'')+pctInv+'%',pctInv>=0?'green':'red');
+      footer='<div style="margin-top:8px"><button class="btn" style="padding:5px 12px;font-size:11px" onclick="nav(\'inversion\')">Ver detalles en Inversión →</button></div>';
     } else {
       var ini=saldosIni[m.nombre]||0;
       var saldoFinal=ini+mv.ing-mv.egr;
@@ -1571,7 +1833,7 @@ window.delCat=function(id){ cats=cats.filter(function(c){return c.id!==id;}); sa
 //  RENDER ALL
 // ════════════════════════════════════════════════
 function renderAll(){
-  renderResumen(); renderSaldos(); renderIngresos(); renderEgresos(); renderDist();
+  renderResumen(); renderSaldos(); renderInversion(); renderIngresos(); renderEgresos(); renderDist();
   renderBitacora(); renderMedios(); renderSubs(); renderCats();
 }
 
