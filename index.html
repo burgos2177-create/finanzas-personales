@@ -590,7 +590,7 @@ var DEFAULT_MES_STATE={
 var currentMes='Enero', currentAnio='2026';
 var state={}, subs=[], cats=[], medios=[], compras=[];
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
-var expandedMps={}, advancedTC={}, expandedAddPos={};
+var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
@@ -1287,7 +1287,7 @@ window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;
 // ════════════════════════════════════════════════
 //  INVERSIÓN
 // ════════════════════════════════════════════════
-function valorPos(p, fechaRef){
+function valorBase(p, fechaRef){
   var ref = fechaRef ? new Date(fechaRef) : new Date();
   if(p.subtipo==='PF'||p.subtipo==='TF'){
     var inicio = p.fechaInicio ? new Date(p.fechaInicio) : ref;
@@ -1304,6 +1304,7 @@ function valorPos(p, fechaRef){
   if(p.subtipo==='Acciones'||p.subtipo==='Cripto') return (p.cantidad||0)*(p.precioActual||0);
   return 0;
 }
+function valorPos(p, fechaRef){ return valorBase(p, fechaRef) + (p.ajuste||0); }
 function aportadoPos(p){
   if(p.subtipo==='PF'||p.subtipo==='TF') return p.montoInicial||0;
   if(p.subtipo==='RV') return p.montoInvertido||0;
@@ -1482,6 +1483,47 @@ window.delPos=function(medioId,posId){
   toast('Posición eliminada');
 };
 window.toggleAddPos=function(medioId){ expandedAddPos[medioId]=!expandedAddPos[medioId]; renderInversion(); };
+window.toggleAdjustPos=function(posId){ adjustingPos[posId]=!adjustingPos[posId]; renderInversion(); };
+window.setSaldoHoy=function(medioId,posId,v){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  var newVal=parseFloat(v); if(isNaN(newVal)) return;
+  var formula=valorBase(p);
+  p.ajuste=Math.round((newVal-formula)*100)/100;
+  if(!p.historia) p.historia=[];
+  var hoy=new Date().toISOString().slice(0,10);
+  var last=p.historia[p.historia.length-1];
+  if(last && last.fecha===hoy) last.valor=newVal;
+  else p.historia.push({fecha:hoy,valor:newVal});
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Saldo ajustado');
+};
+window.clearAjuste=function(medioId,posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  p.ajuste=0;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Ajuste eliminado');
+};
+function saldoHoyHtml(medioId,p,lblText){
+  var formula=valorBase(p), actual=valorPos(p), ajuste=p.ajuste||0;
+  var open=!!adjustingPos[p.id];
+  var hasAjuste=Math.abs(ajuste)>0.005;
+  var gearCol=open?'var(--green)':(hasAjuste?'var(--amber)':'var(--text3)');
+  var gear='<button onclick="toggleAdjustPos(\''+p.id+'\')" style="background:none;border:none;cursor:pointer;color:'+gearCol+';font-size:11px;padding:0 0 0 4px;line-height:1" title="Ajustar manualmente">⚙</button>';
+  var clearBtn=hasAjuste?'<button onclick="clearAjuste('+medioId+',\''+p.id+'\')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:10px;padding:0 0 0 4px;line-height:1" title="Quitar ajuste">↺</button>':'';
+  var lbl='<div class="inv-stat-lbl" style="display:flex;align-items:center">'+(lblText||'Saldo hoy')+gear+clearBtn+'</div>';
+  if(open){
+    return '<div class="inv-stat" style="border-color:rgba(31,209,150,0.4)">'+lbl+
+      '<input type="number" value="'+(Math.round(actual*100)/100)+'" step="0.01" onchange="setSaldoHoy('+medioId+',\''+p.id+'\',this.value)">'+
+      '<div style="font-size:9px;color:var(--text3);margin-top:3px">Fórmula '+fmt(formula)+(hasAjuste?' · Ajuste '+(ajuste>=0?'+':'')+fmt(ajuste):'')+'</div>'+
+    '</div>';
+  }
+  return '<div class="inv-stat">'+lbl+
+    '<div class="inv-stat-val green">'+fmt(actual)+'</div>'+
+    (hasAjuste?'<div style="font-size:9px;color:var(--amber);margin-top:2px">incl. ajuste '+(ajuste>=0?'+':'')+fmt(ajuste)+'</div>':'')+
+  '</div>';
+}
 window.syncAddPosForm=function(medioId){
   var sub=document.getElementById('addpos-'+medioId+'-subtipo').value;
   document.getElementById('addpos-fields-'+medioId).innerHTML=invFieldsHtml('addpos-'+medioId,sub);
@@ -1537,7 +1579,7 @@ function posDetailsHtml(medioId,p){
       '<div class="inv-stat"><div class="inv-stat-lbl">Plazo (meses)</div><input type="number" value="'+(p.plazoMeses||0)+'" min="0" onchange="updPos('+medioId+',\''+pid+'\',\'plazoMeses\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Días transcurridos</div><div class="inv-stat-val">'+dias+'</div></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Vencimiento</div><div class="inv-stat-val" style="font-size:13px">'+(venc?venc.toLocaleDateString('es-MX'):'—')+'</div></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Saldo hoy</div><div class="inv-stat-val green">'+fmt(valorPos(p))+'</div></div>'+
+      saldoHoyHtml(medioId,p)+
     '</div>';
   }
   if(st==='TF'){
@@ -1549,7 +1591,7 @@ function posDetailsHtml(medioId,p){
       '<div class="inv-stat"><div class="inv-stat-lbl">Tasa anual %</div><input type="number" value="'+(p.tasaAnual||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'tasaAnual\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Días devengados</div><div class="inv-stat-val">'+diasTF+'</div></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Intereses</div><div class="inv-stat-val green">+'+fmt(intereses)+'</div></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Saldo hoy</div><div class="inv-stat-val green">'+fmt(valorPos(p))+'</div></div>'+
+      saldoHoyHtml(medioId,p)+
     '</div>';
   }
   if(st==='RV'){
@@ -1569,7 +1611,7 @@ function posDetailsHtml(medioId,p){
       '<div class="inv-stat"><div class="inv-stat-lbl">Precio compra</div><input type="number" value="'+(p.precioCompra||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'precioCompra\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Precio actual</div><input type="number" value="'+(p.precioActual||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'precioActual\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Aportado</div><div class="inv-stat-val">'+fmt(aportadoPos(p))+'</div></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Valor actual</div><div class="inv-stat-val green">'+fmt(valorPos(p))+'</div></div>'+
+      saldoHoyHtml(medioId,p,'Valor actual')+
     '</div>';
   }
   return '';
