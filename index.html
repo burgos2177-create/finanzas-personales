@@ -299,6 +299,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div id="s-inversion" class="section">
         <div class="s-heading">Inversión</div>
         <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Inversiones globales (no atadas a un mes). Los medios tipo "Inversión" aparecen aquí; configura subtipo y campos para calcular el saldo.</div>
+        <div id="inv-usdrate-wrap" style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;flex-wrap:wrap"></div>
         <div class="mg" id="inv-summary"></div>
         <div id="inv-list"></div>
         <div class="card">
@@ -588,7 +589,7 @@ var DEFAULT_MES_STATE={
 //  STATE
 // ════════════════════════════════════════════════
 var currentMes='Enero', currentAnio='2026';
-var state={}, subs=[], cats=[], medios=[], compras=[];
+var state={}, subs=[], cats=[], medios=[], compras=[], globalConfig={usdRate:17.5};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
@@ -623,7 +624,8 @@ function save(skipDelay){
     var p3 = window._setDoc(globalDocRef('cats'), {list: cats});
     var p4 = window._setDoc(globalDocRef('medios'), {list: medios});
     var p5 = window._setDoc(globalDocRef('compras'), {list: compras});
-    Promise.all([p1,p2,p3,p4,p5])
+    var p6 = window._setDoc(globalDocRef('config'), globalConfig);
+    Promise.all([p1,p2,p3,p4,p5,p6])
       .then(function(){ syncStatus('ok'); })
       .catch(function(e){ console.error(e); syncStatus('error'); toast('Error al guardar',true); });
   }, delay);
@@ -1287,6 +1289,7 @@ window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;
 // ════════════════════════════════════════════════
 //  INVERSIÓN
 // ════════════════════════════════════════════════
+function getUsdRate(){ return (globalConfig&&globalConfig.usdRate)||17.5; }
 function valorBase(p, fechaRef){
   var ref = fechaRef ? new Date(fechaRef) : new Date();
   if(p.subtipo==='PF'||p.subtipo==='TF'){
@@ -1301,14 +1304,24 @@ function valorBase(p, fechaRef){
     return (p.montoInicial||0) * (1 + tasa * diasEf / 365);
   }
   if(p.subtipo==='RV') return p.valorActual||0;
-  if(p.subtipo==='Acciones'||p.subtipo==='Cripto') return (p.cantidad||0)*(p.precioActual||0);
+  if(p.subtipo==='Acciones'||p.subtipo==='Cripto'){
+    var qty=p.cantidad||0;
+    var price=p.precioActual||0;
+    if(p.moneda==='USD') price*=getUsdRate();
+    return qty*price;
+  }
   return 0;
 }
 function valorPos(p, fechaRef){ return valorBase(p, fechaRef) + (p.ajuste||0); }
 function aportadoPos(p){
   if(p.subtipo==='PF'||p.subtipo==='TF') return p.montoInicial||0;
   if(p.subtipo==='RV') return p.montoInvertido||0;
-  if(p.subtipo==='Acciones'||p.subtipo==='Cripto') return (p.cantidad||0)*(p.precioCompra||0);
+  if(p.subtipo==='Acciones'||p.subtipo==='Cripto'){
+    var qty=p.cantidad||0;
+    var price=p.precioCompra||0;
+    if(p.moneda==='USD') price*=(p.usdRateCompra||getUsdRate());
+    return qty*price;
+  }
   return 0;
 }
 function newPosId(){ return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -1362,16 +1375,20 @@ function invFieldsHtml(prefix, subtipo){
       '<div class="field"><label>Valor actual ($)</label><input type="number" id="'+prefix+'-rv-va" min="0" step="0.01" placeholder="Si vacío = invertido"></div>'+
       '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-rv-fecha" value="'+today+'"></div></div>';
   } else if(subtipo==='Acciones'){
-    return '<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Ticker</label><input type="text" id="'+prefix+'-ac-ticker" placeholder="Ej. AAPL"></div>'+
+    return '<div class="fg" style="margin-top:10px;grid-template-columns:.7fr 1fr 1fr 1fr 1fr 1fr 1fr"><div class="field"><label>Moneda</label><select id="'+prefix+'-ac-moneda"><option value="MXN">MXN</option><option value="USD">USD</option></select></div>'+
+      '<div class="field"><label>Ticker</label><input type="text" id="'+prefix+'-ac-ticker" placeholder="Ej. AAPL"></div>'+
       '<div class="field"><label>Cantidad</label><input type="number" id="'+prefix+'-ac-cant" min="0" step="0.0001"></div>'+
-      '<div class="field"><label>Precio compra ($)</label><input type="number" id="'+prefix+'-ac-pc" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Precio actual ($)</label><input type="number" id="'+prefix+'-ac-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>Precio compra</label><input type="number" id="'+prefix+'-ac-pc" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Precio actual</label><input type="number" id="'+prefix+'-ac-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>USD/MXN compra</label><input type="number" id="'+prefix+'-ac-usdrc" min="0" step="0.0001" placeholder="Solo si USD"></div>'+
       '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-ac-fecha" value="'+today+'"></div></div>';
   } else if(subtipo==='Cripto'){
-    return '<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Símbolo</label><input type="text" id="'+prefix+'-cr-sim" placeholder="Ej. BTC"></div>'+
+    return '<div class="fg" style="margin-top:10px;grid-template-columns:.7fr 1fr 1fr 1fr 1fr 1fr 1fr"><div class="field"><label>Moneda</label><select id="'+prefix+'-cr-moneda"><option value="MXN">MXN</option><option value="USD">USD</option></select></div>'+
+      '<div class="field"><label>Símbolo</label><input type="text" id="'+prefix+'-cr-sim" placeholder="Ej. BTC"></div>'+
       '<div class="field"><label>Cantidad</label><input type="number" id="'+prefix+'-cr-cant" min="0" step="0.00000001"></div>'+
-      '<div class="field"><label>Precio compra ($)</label><input type="number" id="'+prefix+'-cr-pc" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Precio actual ($)</label><input type="number" id="'+prefix+'-cr-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>Precio compra</label><input type="number" id="'+prefix+'-cr-pc" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Precio actual</label><input type="number" id="'+prefix+'-cr-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>USD/MXN compra</label><input type="number" id="'+prefix+'-cr-usdrc" min="0" step="0.0001" placeholder="Solo si USD"></div>'+
       '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-cr-fecha" value="'+today+'"></div></div>';
   }
   return '';
@@ -1396,12 +1413,16 @@ function readInvFieldsInto(m, prefix, subtipo){
     m.cantidad=parseFloat(document.getElementById(prefix+'-ac-cant').value)||0;
     m.precioCompra=parseFloat(document.getElementById(prefix+'-ac-pc').value)||0;
     m.precioActual=parseFloat(document.getElementById(prefix+'-ac-pa').value)||m.precioCompra;
+    m.moneda=(document.getElementById(prefix+'-ac-moneda')||{}).value||'MXN';
+    if(m.moneda==='USD') m.usdRateCompra=parseFloat((document.getElementById(prefix+'-ac-usdrc')||{}).value)||getUsdRate();
     m.fechaInicio=document.getElementById(prefix+'-ac-fecha').value||new Date().toISOString().slice(0,10);
   } else if(subtipo==='Cripto'){
     m.simbolo=(document.getElementById(prefix+'-cr-sim').value||'').trim().toUpperCase();
     m.cantidad=parseFloat(document.getElementById(prefix+'-cr-cant').value)||0;
     m.precioCompra=parseFloat(document.getElementById(prefix+'-cr-pc').value)||0;
     m.precioActual=parseFloat(document.getElementById(prefix+'-cr-pa').value)||m.precioCompra;
+    m.moneda=(document.getElementById(prefix+'-cr-moneda')||{}).value||'MXN';
+    if(m.moneda==='USD') m.usdRateCompra=parseFloat((document.getElementById(prefix+'-cr-usdrc')||{}).value)||getUsdRate();
     m.fechaInicio=document.getElementById(prefix+'-cr-fecha').value||new Date().toISOString().slice(0,10);
   }
 }
@@ -1450,7 +1471,9 @@ window.addPosicion=function(medioId){
   if(!m.posiciones) m.posiciones=[];
   var subtipo=document.getElementById('addpos-'+medioId+'-subtipo').value;
   var nombre=document.getElementById('addpos-'+medioId+'-nombre').value.trim()||(SUBTIPOS_INV[subtipo].label+' '+(m.posiciones.length+1));
-  var p={id:newPosId(),nombre:nombre,subtipo:subtipo,historia:[]};
+  var grupoEl=document.getElementById('addpos-'+medioId+'-grupo');
+  var grupo=grupoEl?(grupoEl.value||'').trim():'';
+  var p={id:newPosId(),nombre:nombre,subtipo:subtipo,grupo:grupo,historia:[]};
   readInvFieldsInto(p,'addpos-'+medioId,subtipo);
   p.historia=[{fecha:p.fechaInicio||new Date().toISOString().slice(0,10),valor:aportadoPos(p)}];
   if(Math.abs(valorPos(p)-aportadoPos(p))>0.01) p.historia.push({fecha:new Date().toISOString().slice(0,10),valor:valorPos(p)});
@@ -1463,7 +1486,12 @@ window.updPos=function(medioId,posId,f,v){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
   var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
   var oldV=valorPos(p);
-  if(['valorActual','precioActual','precioCompra','montoInicial','montoInvertido','cantidad','tasaAnual','plazoMeses'].indexOf(f)>=0) p[f]=parseFloat(v)||0;
+  if(['valorActual','precioActual','precioCompra','montoInicial','montoInvertido','cantidad','tasaAnual','plazoMeses','usdRateCompra'].indexOf(f)>=0) p[f]=parseFloat(v)||0;
+  else if(f==='moneda'){
+    var prev=p.moneda||'MXN';
+    p.moneda=v;
+    if(v==='USD' && prev!=='USD' && !p.usdRateCompra) p.usdRateCompra=getUsdRate();
+  }
   else p[f]=v;
   var newV=valorPos(p);
   if(Math.abs(newV-oldV)>0.01){
@@ -1484,6 +1512,11 @@ window.delPos=function(medioId,posId){
 };
 window.toggleAddPos=function(medioId){ expandedAddPos[medioId]=!expandedAddPos[medioId]; renderInversion(); };
 window.toggleAdjustPos=function(posId){ adjustingPos[posId]=!adjustingPos[posId]; renderInversion(); };
+window.setUsdRate=function(v){
+  var n=parseFloat(v); if(!n||n<=0){ toast('Tipo de cambio inválido',true); return; }
+  globalConfig.usdRate=Math.round(n*10000)/10000;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+};
 window.setSaldoHoy=function(medioId,posId,v){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
   var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
@@ -1605,13 +1638,22 @@ function posDetailsHtml(medioId,p){
     var symLbl=st==='Acciones'?'Ticker':'Símbolo';
     var symField=st==='Acciones'?'ticker':'simbolo';
     var symVal=p[symField]||'';
+    var mon=p.moneda||'MXN';
+    var usdRC=p.usdRateCompra||getUsdRate();
+    var usdNow=getUsdRate();
+    var pcSub=mon==='USD'?'<div style="font-size:9px;color:var(--text3);margin-top:2px">@'+fmt(usdRC)+' = $'+(((p.precioCompra||0)*usdRC).toLocaleString('es-MX',{maximumFractionDigits:2}))+' MXN</div>':'';
+    var paSub=mon==='USD'?'<div style="font-size:9px;color:var(--text3);margin-top:2px">@'+fmt(usdNow)+' = $'+(((p.precioActual||0)*usdNow).toLocaleString('es-MX',{maximumFractionDigits:2}))+' MXN</div>':'';
+    var monLabel=mon==='USD'?' (USD)':'';
+    var usdRCStat=mon==='USD'?'<div class="inv-stat"><div class="inv-stat-lbl">USD/MXN compra</div><input type="number" value="'+usdRC+'" step="0.0001" onchange="updPos('+medioId+',\''+pid+'\',\'usdRateCompra\',this.value)"></div>':'';
     return '<div class="inv-stat-grid">'+
+      '<div class="inv-stat"><div class="inv-stat-lbl">Moneda</div><select onchange="updPos('+medioId+',\''+pid+'\',\'moneda\',this.value)" style="width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:14px;font-family:var(--mono);padding:4px 7px;outline:none"><option value="MXN"'+(mon==='MXN'?' selected':'')+'>MXN</option><option value="USD"'+(mon==='USD'?' selected':'')+'>USD</option></select></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">'+symLbl+'</div><input type="text" value="'+esc(symVal)+'" onchange="updPos('+medioId+',\''+pid+'\',\''+symField+'\',this.value)"></div>'+
       '<div class="inv-stat"><div class="inv-stat-lbl">Cantidad</div><input type="number" value="'+(p.cantidad||0)+'" step="0.00000001" onchange="updPos('+medioId+',\''+pid+'\',\'cantidad\',this.value)"></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Precio compra</div><input type="number" value="'+(p.precioCompra||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'precioCompra\',this.value)"></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Precio actual</div><input type="number" value="'+(p.precioActual||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'precioActual\',this.value)"></div>'+
-      '<div class="inv-stat"><div class="inv-stat-lbl">Aportado</div><div class="inv-stat-val">'+fmt(aportadoPos(p))+'</div></div>'+
-      saldoHoyHtml(medioId,p,'Valor actual')+
+      '<div class="inv-stat"><div class="inv-stat-lbl">Precio compra'+monLabel+'</div><input type="number" value="'+(p.precioCompra||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'precioCompra\',this.value)">'+pcSub+'</div>'+
+      '<div class="inv-stat"><div class="inv-stat-lbl">Precio actual'+monLabel+'</div><input type="number" value="'+(p.precioActual||0)+'" step="0.01" onchange="updPos('+medioId+',\''+pid+'\',\'precioActual\',this.value)">'+paSub+'</div>'+
+      usdRCStat+
+      '<div class="inv-stat"><div class="inv-stat-lbl">Aportado MXN</div><div class="inv-stat-val">'+fmt(aportadoPos(p))+'</div></div>'+
+      saldoHoyHtml(medioId,p,'Valor actual MXN')+
     '</div>';
   }
   return '';
@@ -1624,7 +1666,9 @@ function posCardHtml(medioId,p){
   return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:11px 13px;margin-bottom:10px">'+
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap">'+
       '<span class="subtipo-badge subtipo-'+st+'">'+meta.label+'</span>'+
-      '<input class="editable" value="'+esc(p.nombre||'')+'" style="font-size:13px;font-weight:500;flex:1;min-width:80px;max-width:240px" onblur="updPos('+medioId+',\''+p.id+'\',\'nombre\',this.value)">'+
+      '<input class="editable" value="'+esc(p.nombre||'')+'" placeholder="Nombre" style="font-size:13px;font-weight:500;min-width:80px;max-width:200px" onblur="updPos('+medioId+',\''+p.id+'\',\'nombre\',this.value)">'+
+      '<input class="editable" value="'+esc(p.grupo||'')+'" placeholder="Grupo (opcional)" style="font-size:11px;color:var(--text3);min-width:80px;max-width:160px" onblur="updPos('+medioId+',\''+p.id+'\',\'grupo\',this.value)" title="Subcuenta o grupo">'+
+      '<div style="flex:1;min-width:10px"></div>'+
       '<div style="font-size:12px;font-family:var(--mono);color:'+(gan>=0?'var(--green)':'var(--red)')+';white-space:nowrap">'+fmt(val)+' ('+(pctP>=0?'+':'')+pctP+'%)</div>'+
       '<button class="btn-del" onclick="delPos('+medioId+',\''+p.id+'\')">✕</button>'+
     '</div>'+
@@ -1648,6 +1692,11 @@ function renderInversion(){
     mc('Valor actual',fmt(totActual),totActual>=totAport?'green':'red')+
     mc('Ganancia / Pérdida',(ganancia>=0?'+':'')+fmt(ganancia),ganancia>=0?'green':'red')+
     mc('Rendimiento',(pct>=0?'+':'')+pct+'%',pct>=0?'green':'red');
+  // USD rate widget
+  var usdEl=document.getElementById('inv-usdrate-wrap');
+  if(usdEl) usdEl.innerHTML='<span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">USD/MXN</span>'+
+    '<input type="number" value="'+getUsdRate()+'" step="0.0001" onchange="setUsdRate(this.value)" style="width:100px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;font-family:var(--mono);padding:5px 9px;outline:none;text-align:right">'+
+    '<span style="font-size:11px;color:var(--text3)">— para convertir posiciones en USD a MXN</span>';
 
   if(!invs.length){
     document.getElementById('inv-list').innerHTML='<div class="empty">Sin inversiones aún. Agrega una abajo.</div>';
@@ -1669,7 +1718,20 @@ function renderInversion(){
 
     var posListHtml='';
     if(posiciones.length){
-      posListHtml=posiciones.map(function(p){return posCardHtml(m.id,p);}).join('');
+      var byGroup={};
+      posiciones.forEach(function(p){ var g=(p.grupo||'').trim(); if(!byGroup[g]) byGroup[g]=[]; byGroup[g].push(p); });
+      var groupKeys=Object.keys(byGroup).sort(function(a,b){ if(!a) return 1; if(!b) return -1; return a.localeCompare(b); });
+      var multipleGroups=groupKeys.length>1 || (groupKeys.length===1 && groupKeys[0]!=='');
+      posListHtml=groupKeys.map(function(g){
+        var positions=byGroup[g];
+        var gAport=positions.reduce(function(a,p){return a+aportadoPos(p);},0);
+        var gVal=positions.reduce(function(a,p){return a+valorPos(p);},0);
+        var gGan=gVal-gAport;
+        var gPct=gAport>0?Math.round(gGan/gAport*10000)/100:0;
+        var groupLabel=g?'📁 '+esc(g):'Sin grupo';
+        var header=multipleGroups?'<div style="display:flex;align-items:center;gap:8px;margin:10px 0 6px;padding:6px 10px;background:var(--bg);border-radius:6px;border-left:3px solid '+(g?'var(--blue)':'var(--text3)')+'"><div style="font-size:11px;color:'+(g?'var(--blue)':'var(--text3)')+';text-transform:uppercase;letter-spacing:0.05em;font-weight:500">'+groupLabel+' ('+positions.length+')</div><div style="flex:1"></div><div style="font-size:11px;font-family:var(--mono);color:var(--text2)">'+fmt(gAport)+' → '+fmt(gVal)+' <span style="color:'+(gGan>=0?'var(--green)':'var(--red)')+'">('+(gPct>=0?'+':'')+gPct+'%)</span></div></div>':'';
+        return header+positions.map(function(p){return posCardHtml(m.id,p);}).join('');
+      }).join('');
     } else {
       // Cuenta sin configurar — mostrar form de configuración inicial
       posListHtml='<div style="padding:12px 14px;background:var(--bg3);border:1px solid rgba(91,156,246,0.25);border-radius:8px;margin-bottom:10px">'+
@@ -1686,8 +1748,11 @@ function renderInversion(){
     var addBtn='<button class="btn" style="padding:5px 12px;font-size:11px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="toggleAddPos('+m.id+')">'+(addOpen?'▼ Cerrar':'+ Agregar posición')+'</button>';
     var addForm='';
     if(addOpen){
+      var existingGroups=Array.from(new Set(posiciones.map(function(p){return (p.grupo||'').trim();}).filter(Boolean))).sort();
+      var groupHelp=existingGroups.length?' <span style="font-size:9px;color:var(--text3)">existentes: '+existingGroups.map(esc).join(', ')+'</span>':'';
       addForm='<div style="padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-top:8px">'+
-        '<div class="fg" style="grid-template-columns:1.5fr 1fr"><div class="field"><label>Nombre</label><input type="text" id="addpos-'+m.id+'-nombre" placeholder="Ej. CETES 28d, BTC, AAPL"></div>'+
+        '<div class="fg fg3"><div class="field"><label>Nombre</label><input type="text" id="addpos-'+m.id+'-nombre" placeholder="Ej. CETES 28d, BTC, AAPL"></div>'+
+        '<div class="field"><label>Grupo (opcional)'+groupHelp+'</label><input type="text" id="addpos-'+m.id+'-grupo" placeholder="Ej. Trading USA"></div>'+
         '<div class="field"><label>Subtipo</label><select id="addpos-'+m.id+'-subtipo" onchange="syncAddPosForm('+m.id+')">'+
           '<option value="PF">Plazo fijo</option><option value="TF">Tasa fija flexible</option><option value="RV">Renta variable / Fondos</option><option value="Acciones">Acciones</option><option value="Cripto">Criptomoneda</option>'+
         '</select></div></div>'+
@@ -2066,6 +2131,7 @@ window._appBoot = async function(){
     cats   = await loadGlobalFromFirestore('cats', DEFAULT_CATS);
     subs   = await loadGlobalFromFirestore('subs', []);
     compras = await loadGlobalFromFirestore('compras', []);
+    try { var cfgSnap=await window._getDoc(globalDocRef('config')); if(cfgSnap.exists()) globalConfig=Object.assign({usdRate:17.5},cfgSnap.data()); } catch(e){}
     state  = await loadMesFromFirestore();
     if(!state.gastos) state.gastos=[];
     if(!state.nextId) state.nextId=200;
