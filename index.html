@@ -1318,35 +1318,77 @@ function appendHistoria(m){
   if(last && last.fecha===hoy) last.valor=v;
   else m.historia.push({fecha:hoy, valor:v});
 }
+function invFieldsHtml(prefix, subtipo){
+  var today=new Date().toISOString().slice(0,10);
+  if(subtipo==='PF'){
+    return '<div class="fg fg4" style="margin-top:10px"><div class="field"><label>Monto inicial ($)</label><input type="number" id="'+prefix+'-pf-monto" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Tasa anual (%)</label><input type="number" id="'+prefix+'-pf-tasa" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Plazo (meses)</label><input type="number" id="'+prefix+'-pf-plazo" min="0" placeholder="0 = abierto"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-pf-fecha" value="'+today+'"></div></div>';
+  } else if(subtipo==='RV'){
+    return '<div class="fg fg3" style="margin-top:10px"><div class="field"><label>Monto invertido ($)</label><input type="number" id="'+prefix+'-rv-mi" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Valor actual ($)</label><input type="number" id="'+prefix+'-rv-va" min="0" step="0.01" placeholder="Si vacío = invertido"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-rv-fecha" value="'+today+'"></div></div>';
+  } else if(subtipo==='Acciones'){
+    return '<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Ticker</label><input type="text" id="'+prefix+'-ac-ticker" placeholder="Ej. AAPL"></div>'+
+      '<div class="field"><label>Cantidad</label><input type="number" id="'+prefix+'-ac-cant" min="0" step="0.0001"></div>'+
+      '<div class="field"><label>Precio compra ($)</label><input type="number" id="'+prefix+'-ac-pc" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Precio actual ($)</label><input type="number" id="'+prefix+'-ac-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-ac-fecha" value="'+today+'"></div></div>';
+  } else if(subtipo==='Cripto'){
+    return '<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Símbolo</label><input type="text" id="'+prefix+'-cr-sim" placeholder="Ej. BTC"></div>'+
+      '<div class="field"><label>Cantidad</label><input type="number" id="'+prefix+'-cr-cant" min="0" step="0.00000001"></div>'+
+      '<div class="field"><label>Precio compra ($)</label><input type="number" id="'+prefix+'-cr-pc" min="0" step="0.01"></div>'+
+      '<div class="field"><label>Precio actual ($)</label><input type="number" id="'+prefix+'-cr-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
+      '<div class="field"><label>Fecha inicio</label><input type="date" id="'+prefix+'-cr-fecha" value="'+today+'"></div></div>';
+  }
+  return '';
+}
+function readInvFieldsInto(m, prefix, subtipo){
+  m.subtipo=subtipo;
+  m.icono=m.icono||SUBTIPOS_INV[subtipo].icon;
+  if(subtipo==='PF'){
+    m.montoInicial=parseFloat(document.getElementById(prefix+'-pf-monto').value)||0;
+    m.tasaAnual=parseFloat(document.getElementById(prefix+'-pf-tasa').value)||0;
+    m.plazoMeses=parseInt(document.getElementById(prefix+'-pf-plazo').value,10)||0;
+    m.fechaInicio=document.getElementById(prefix+'-pf-fecha').value||new Date().toISOString().slice(0,10);
+  } else if(subtipo==='RV'){
+    m.montoInvertido=parseFloat(document.getElementById(prefix+'-rv-mi').value)||0;
+    m.valorActual=parseFloat(document.getElementById(prefix+'-rv-va').value)||m.montoInvertido;
+    m.fechaInicio=document.getElementById(prefix+'-rv-fecha').value||new Date().toISOString().slice(0,10);
+  } else if(subtipo==='Acciones'){
+    m.ticker=(document.getElementById(prefix+'-ac-ticker').value||'').trim().toUpperCase();
+    m.cantidad=parseFloat(document.getElementById(prefix+'-ac-cant').value)||0;
+    m.precioCompra=parseFloat(document.getElementById(prefix+'-ac-pc').value)||0;
+    m.precioActual=parseFloat(document.getElementById(prefix+'-ac-pa').value)||m.precioCompra;
+    m.fechaInicio=document.getElementById(prefix+'-ac-fecha').value||new Date().toISOString().slice(0,10);
+  } else if(subtipo==='Cripto'){
+    m.simbolo=(document.getElementById(prefix+'-cr-sim').value||'').trim().toUpperCase();
+    m.cantidad=parseFloat(document.getElementById(prefix+'-cr-cant').value)||0;
+    m.precioCompra=parseFloat(document.getElementById(prefix+'-cr-pc').value)||0;
+    m.precioActual=parseFloat(document.getElementById(prefix+'-cr-pa').value)||m.precioCompra;
+    m.fechaInicio=document.getElementById(prefix+'-cr-fecha').value||new Date().toISOString().slice(0,10);
+  }
+}
 window.syncInvForm=function(){
   var subtipo=document.getElementById('inv-subtipo').value;
   var container=document.getElementById('inv-fields-container');
-  if(!container) return;
-  var today=new Date().toISOString().slice(0,10);
-  var html='';
-  if(subtipo==='PF'){
-    html='<div class="fg fg4" style="margin-top:10px"><div class="field"><label>Monto inicial ($)</label><input type="number" id="inv-pf-monto" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Tasa anual (%)</label><input type="number" id="inv-pf-tasa" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Plazo (meses)</label><input type="number" id="inv-pf-plazo" min="1" placeholder="Ej. 12"></div>'+
-      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-pf-fecha" value="'+today+'"></div></div>';
-  } else if(subtipo==='RV'){
-    html='<div class="fg fg3" style="margin-top:10px"><div class="field"><label>Monto invertido ($)</label><input type="number" id="inv-rv-mi" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Valor actual ($)</label><input type="number" id="inv-rv-va" min="0" step="0.01" placeholder="Si vacío = monto invertido"></div>'+
-      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-rv-fecha" value="'+today+'"></div></div>';
-  } else if(subtipo==='Acciones'){
-    html='<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Ticker</label><input type="text" id="inv-ac-ticker" placeholder="Ej. AAPL"></div>'+
-      '<div class="field"><label>Cantidad</label><input type="number" id="inv-ac-cant" min="0" step="0.0001"></div>'+
-      '<div class="field"><label>Precio compra ($)</label><input type="number" id="inv-ac-pc" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Precio actual ($)</label><input type="number" id="inv-ac-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
-      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-ac-fecha" value="'+today+'"></div></div>';
-  } else if(subtipo==='Cripto'){
-    html='<div class="fg fg5" style="margin-top:10px"><div class="field"><label>Símbolo</label><input type="text" id="inv-cr-sim" placeholder="Ej. BTC"></div>'+
-      '<div class="field"><label>Cantidad</label><input type="number" id="inv-cr-cant" min="0" step="0.00000001"></div>'+
-      '<div class="field"><label>Precio compra ($)</label><input type="number" id="inv-cr-pc" min="0" step="0.01"></div>'+
-      '<div class="field"><label>Precio actual ($)</label><input type="number" id="inv-cr-pa" min="0" step="0.01" placeholder="Si vacío = compra"></div>'+
-      '<div class="field"><label>Fecha inicio</label><input type="date" id="inv-cr-fecha" value="'+today+'"></div></div>';
+  if(container) container.innerHTML=invFieldsHtml('inv',subtipo);
+};
+window.cfgInvSubtipoChange=function(medioId){
+  var sub=document.getElementById('cfg-'+medioId+'-subtipo').value;
+  document.getElementById('cfg-fields-'+medioId).innerHTML=invFieldsHtml('cfg-'+medioId,sub);
+};
+window.applyCfgInv=function(medioId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var sub=document.getElementById('cfg-'+medioId+'-subtipo').value;
+  readInvFieldsInto(m,'cfg-'+medioId,sub);
+  if(!m.historia||!m.historia.length){
+    m.historia=[{fecha:m.fechaInicio,valor:aportadoInv(m)}];
+    if(Math.abs(valorInversion(m)-aportadoInv(m))>0.01) m.historia.push({fecha:new Date().toISOString().slice(0,10),valor:valorInversion(m)});
   }
-  container.innerHTML=html;
+  save(); renderInversion(); renderSaldos(); renderResumen(); renderMedios();
+  toast('Inversión configurada');
 };
 window.addInversion=function(){
   var nombre=document.getElementById('inv-nombre').value.trim();
@@ -1485,7 +1527,14 @@ function renderInversion(){
         '<div class="inv-stat"><div class="inv-stat-lbl">Valor actual</div><div class="inv-stat-val green">'+fmt(actual)+'</div></div>'+
       '</div>';
     } else {
-      details='<div class="alert alert-warn"><span>⚠</span> Subtipo no configurado. Edita el medio en "Medios de Pago" o elimínalo.</div>';
+      details='<div style="padding:12px 14px;background:var(--bg3);border:1px solid rgba(91,156,246,0.25);border-radius:8px">'+
+        '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">⚠ Subtipo sin configurar — selecciona y completa los campos:</div>'+
+        '<div class="fg" style="grid-template-columns:1fr"><div class="field"><label>Subtipo</label>'+
+          '<select id="cfg-'+m.id+'-subtipo" onchange="cfgInvSubtipoChange('+m.id+')"><option value="PF">Plazo fijo</option><option value="RV">Renta variable / Fondos</option><option value="Acciones">Acciones</option><option value="Cripto">Criptomoneda</option></select>'+
+        '</div></div>'+
+        '<div id="cfg-fields-'+m.id+'">'+invFieldsHtml('cfg-'+m.id,'PF')+'</div>'+
+        '<button class="btn btn-green" style="margin-top:8px" onclick="applyCfgInv('+m.id+')">Configurar</button>'+
+      '</div>';
     }
     var historia=m.historia||[];
     var chartHtml=historia.length>1?'<div class="inv-chart-wrap"><canvas id="inv-chart-'+m.id+'"></canvas></div>':'';
