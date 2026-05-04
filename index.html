@@ -1347,7 +1347,8 @@ function renderSaldos(){
         saldoStat('Abonos / pagos',fmt(abonos),'green')+
         saldoStat('Saldo a pagar',fmt(aPagar),aPagar>0?'red':'green')+
         saldoStat('Disponible',fmt(Math.max(disp,0)),disp<0?'red':'blue');
-      footer='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div></div>';
+      var bulkBtn=cargos>0?'<button class="btn" style="padding:4px 10px;font-size:11px;color:var(--amber);border-color:rgba(245,165,36,0.3)" onclick="cargosTCToDeuda('+m.id+')" title="Mueve todos los cargos del mes a Deuda heredada">Mover cargos → deuda</button>':'';
+      footer='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div>'+bulkBtn+'</div>';
     } else {
       var ini=saldosIni[m.nombre]||0;
       var saldoFinal=ini+mv.ing-mv.egr;
@@ -1435,11 +1436,13 @@ function renderSaldos(){
       movList='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">'+
         (movs.length?movs.map(function(g){
           var isI=gTipo(g)==='ingreso';
+          var canConvert=isCred && !isI;
           return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">'+
             '<span class="tipo-badge '+(isI?'ing':'egr')+'">'+(isI?'ING':'EGR')+'</span>'+
             '<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g.desc)+
               '<div style="font-size:10px;color:var(--text3)">'+fmtDate(g.fecha)+' · '+esc(g.cat)+'</div></div>'+
             '<span style="font-family:var(--mono);color:'+(isI?'var(--green)':'var(--red)')+';white-space:nowrap">'+(isI?'+':'−')+fmt(g.monto)+'</span>'+
+            (canConvert?'<button class="btn" style="padding:3px 8px;font-size:10px;color:var(--amber);border-color:rgba(245,165,36,0.3)" onclick="cargoToDeuda('+g.id+')" title="Mover este cargo a Deuda heredada (sale de los egresos del mes)">→ Deuda</button>':'')+
             '<button class="btn-del" onclick="delGasto('+g.id+')">✕</button>'+
           '</div>';
         }).join(''):'<div style="text-align:center;color:var(--text3);padding:14px;font-size:12px">Sin movimientos en este mes</div>')+
@@ -1450,6 +1453,27 @@ function renderSaldos(){
   document.getElementById('saldos-list').innerHTML=html||'<div class="empty">Sin medios de pago configurados. Ve a Medios de Pago para agregar.</div>';
 }
 window.toggleSaldoMov=function(mp){ expandedMps[mp]=!expandedMps[mp]; renderSaldos(); };
+window.cargoToDeuda=function(id){
+  var g=state.gastos.find(function(x){return x.id===id;}); if(!g) return;
+  if(!confirm('¿Mover este cargo a Deuda heredada de '+g.mp+'?\n\nMonto: '+fmt(g.monto)+'\n\n• Se elimina de la bitácora del mes\n• Se suma a la deuda inicial de la TC\n• El saldo a pagar de la TC NO cambia')) return;
+  if(!state.saldosIniciales) state.saldosIniciales={};
+  state.saldosIniciales[g.mp]=(state.saldosIniciales[g.mp]||0)+g.monto;
+  state.gastos=state.gastos.filter(function(x){return x.id!==id;});
+  save(); renderSaldos(); renderBitacora(); renderResumen(); renderIngresos();
+  toast('Movido a deuda heredada');
+};
+window.cargosTCToDeuda=function(medioId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var cargos=(state.gastos||[]).filter(function(g){return g.mp===m.nombre && (g.tipo||'egreso')==='egreso';});
+  if(!cargos.length){ toast('Sin cargos del mes',true); return; }
+  var tot=cargos.reduce(function(a,g){return a+g.monto;},0);
+  if(!confirm('¿Mover los '+cargos.length+' cargo(s) del mes de '+m.nombre+' a Deuda heredada?\n\nTotal: '+fmt(tot)+'\n\n• Se eliminan de la bitácora del mes\n• Se suman a la deuda inicial de la TC')) return;
+  if(!state.saldosIniciales) state.saldosIniciales={};
+  state.saldosIniciales[m.nombre]=(state.saldosIniciales[m.nombre]||0)+tot;
+  state.gastos=state.gastos.filter(function(g){return !(g.mp===m.nombre && (g.tipo||'egreso')==='egreso');});
+  save(); renderSaldos(); renderBitacora(); renderResumen(); renderIngresos();
+  toast('Cargos movidos a deuda heredada');
+};
 window.filterBitToMp=function(mp){ bitFilterTipo='Todos'; bitFilterCat='Todos'; bitFilterMP=mp; nav('bitacora'); };
 window.quickAddMov=function(medioId,tipo){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
