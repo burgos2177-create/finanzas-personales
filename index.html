@@ -267,7 +267,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <!-- SALDOS -->
       <div id="s-saldos" class="section">
         <div class="s-heading">Saldos <span id="lbl-saldos"></span></div>
-        <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Saldos calculados desde la bitácora. Configura saldo inicial (débito/digital/efectivo/apartado) o línea de crédito.</div>
+        <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Configura saldo inicial o línea de crédito. Usa los botones rápidos para registrar cargos/abonos sin ir a Bitácora.</div>
+        <div class="mg" id="saldos-summary"></div>
         <div id="saldos-list"></div>
       </div>
 
@@ -526,6 +527,7 @@ var DEFAULT_MES_STATE={
 var currentMes='Enero', currentAnio='2026';
 var state={}, subs=[], cats=[], medios=[];
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
+var expandedMps={};
 var flujoChart=null, cuentasChart=null, bitChart=null;
 var saveTimer=null;
 
@@ -1098,47 +1100,125 @@ function movByMp(){
   return m;
 }
 function saldoStat(lbl,val,cls){ return '<div class="saldo-stat"><div class="saldo-stat-lbl">'+lbl+'</div><div class="saldo-stat-val '+(cls||'')+'">'+val+'</div></div>'; }
+function defaultFechaForViewedMonth(){
+  var n=new Date();
+  var vy=parseInt(currentAnio,10), vm=MESES.indexOf(currentMes);
+  if(n.getFullYear()===vy && n.getMonth()===vm) return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0');
+  return currentAnio+'-'+String(vm+1).padStart(2,'0')+'-01';
+}
+function movsForMp(name){
+  return (state.gastos||[]).filter(function(g){return g.mp===name;}).sort(function(a,b){return (b.fecha||'').localeCompare(a.fecha||'');});
+}
 function renderSaldos(){
   var lbl=document.getElementById('lbl-saldos'); if(!lbl) return;
   lbl.innerHTML=mesLabel();
   var mov=movByMp();
   var saldosIni=state.saldosIniciales||{};
+  var totActivos=0, totDeuda=0, totLineaUsada=0, totLinea=0;
+  medios.forEach(function(m){
+    var mv=mov[m.nombre]||{ing:0,egr:0};
+    if(m.tipo==='Crédito'){
+      var aPagar=mv.egr-mv.ing;
+      if(aPagar>0) totDeuda+=aPagar;
+      totLinea+=(m.lineaCredito||0);
+      totLineaUsada+=Math.max(aPagar,0);
+    } else {
+      var ini=saldosIni[m.nombre]||0;
+      totActivos+=ini+mv.ing-mv.egr;
+    }
+  });
+  var neto=totActivos-totDeuda;
+  var pctLinea=totLinea>0?Math.round(totLineaUsada/totLinea*100):0;
+  document.getElementById('saldos-summary').innerHTML=
+    mc('Activos (no crédito)',fmt(totActivos),totActivos<0?'red':'green',medios.filter(function(m){return m.tipo!=='Crédito';}).length+' cuentas')+
+    mc('Deuda total',fmt(totDeuda),totDeuda>0?'red':'',medios.filter(function(m){return m.tipo==='Crédito';}).length+' tarjetas crédito')+
+    mc('Patrimonio neto',fmt(neto),neto<0?'red':'green','activos − deuda')+
+    mc('Uso línea total',pctLinea+'%',pctLinea>=80?'red':pctLinea>=50?'amber':'blue',fmt(totLineaUsada)+' / '+fmt(totLinea));
+
   var html=medios.map(function(m){
     var mv=mov[m.nombre]||{ing:0,egr:0};
+    var isCred=m.tipo==='Crédito';
     var head='<div class="saldo-head">'+
       '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+'">'+(m.icono||TIPO_ICONS[m.tipo]||'💳')+'</div>'+
-      '<div><div class="saldo-name" style="color:'+m.color+'">'+esc(m.nombre)+'</div>'+
+      '<div style="flex:1"><div class="saldo-name" style="color:'+m.color+'">'+esc(m.nombre)+'</div>'+
         '<div class="saldo-tipo">'+esc(m.tipo)+(m.notas?' · '+esc(m.notas):'')+'</div></div></div>';
-    if(m.tipo==='Crédito'){
+    var statsHtml, footer='';
+    if(isCred){
       var linea=m.lineaCredito||0;
       var cargos=mv.egr, abonos=mv.ing;
       var aPagar=cargos-abonos;
       var disp=linea-aPagar;
       var pctU=linea>0?Math.round(aPagar/linea*100):0;
       var pctCls=pctU>=100?'over':pctU>=80?'warn':'';
-      var stats=
+      statsHtml=
         '<div class="saldo-stat"><div class="saldo-stat-lbl">Línea autorizada</div>'+
           '<input type="number" value="'+linea+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)"></div>'+
         saldoStat('Cargos del mes',fmt(cargos),'red')+
         saldoStat('Abonos / pagos',fmt(abonos),'green')+
         saldoStat('Saldo a pagar',fmt(aPagar),aPagar>0?'red':'green')+
         saldoStat('Disponible',fmt(Math.max(disp,0)),disp<0?'red':'blue');
-      var bar='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div></div>';
-      return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+stats+'</div>'+bar+'</div>';
+      footer='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div></div>';
     } else {
       var ini=saldosIni[m.nombre]||0;
       var saldoFinal=ini+mv.ing-mv.egr;
-      var stats=
+      statsHtml=
         '<div class="saldo-stat"><div class="saldo-stat-lbl">Saldo inicial</div>'+
           '<input type="number" value="'+ini+'" step="0.01" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'+
         saldoStat('+ Ingresos',fmt(mv.ing),'green')+
         saldoStat('− Egresos',fmt(mv.egr),'red')+
         saldoStat('Saldo actual',fmt(saldoFinal),saldoFinal<0?'red':'green');
-      return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+stats+'</div></div>';
     }
+    var lblEgr=isCred?'+ Cargo':'+ Egreso';
+    var lblIng=isCred?'+ Abono':'+ Ingreso';
+    var quick='<div style="display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">'+
+      '<input id="quick-desc-'+m.id+'" type="text" placeholder="Descripción" style="flex:2;min-width:120px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--font);outline:none">'+
+      '<input id="quick-monto-'+m.id+'" type="number" placeholder="Monto" min="0" step="0.01" style="width:90px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
+      '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--red);border-color:rgba(240,92,92,0.3)" onclick="quickAddMov('+m.id+',\'egreso\')">'+lblEgr+'</button>'+
+      '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="quickAddMov('+m.id+',\'ingreso\')">'+lblIng+'</button>'+
+      '</div>';
+    var movs=movsForMp(m.nombre);
+    var expanded=!!expandedMps[m.nombre];
+    var movToggle='<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center">'+
+      '<button class="btn" style="padding:5px 10px;font-size:11px" onclick="toggleSaldoMov(\''+esc(m.nombre)+'\')">'+(expanded?'▼ Ocultar':'▶ Ver')+' movimientos ('+movs.length+')</button>'+
+      (movs.length?'<button class="btn" style="padding:5px 10px;font-size:11px" onclick="filterBitToMp(\''+esc(m.nombre)+'\')">Abrir en bitácora</button>':'')+
+      '</div>';
+    var movList='';
+    if(expanded){
+      movList='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">'+
+        (movs.length?movs.map(function(g){
+          var isI=gTipo(g)==='ingreso';
+          return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">'+
+            '<span class="tipo-badge '+(isI?'ing':'egr')+'">'+(isI?'ING':'EGR')+'</span>'+
+            '<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(g.desc)+
+              '<div style="font-size:10px;color:var(--text3)">'+fmtDate(g.fecha)+' · '+esc(g.cat)+'</div></div>'+
+            '<span style="font-family:var(--mono);color:'+(isI?'var(--green)':'var(--red)')+';white-space:nowrap">'+(isI?'+':'−')+fmt(g.monto)+'</span>'+
+            '<button class="btn-del" onclick="delGasto('+g.id+')">✕</button>'+
+          '</div>';
+        }).join(''):'<div style="text-align:center;color:var(--text3);padding:14px;font-size:12px">Sin movimientos en este mes</div>')+
+      '</div>';
+    }
+    return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+statsHtml+'</div>'+footer+quick+movToggle+movList+'</div>';
   }).join('');
   document.getElementById('saldos-list').innerHTML=html||'<div class="empty">Sin medios de pago configurados. Ve a Medios de Pago para agregar.</div>';
 }
+window.toggleSaldoMov=function(mp){ expandedMps[mp]=!expandedMps[mp]; renderSaldos(); };
+window.filterBitToMp=function(mp){ bitFilterTipo='Todos'; bitFilterCat='Todos'; bitFilterMP=mp; nav('bitacora'); };
+window.quickAddMov=function(medioId,tipo){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var descEl=document.getElementById('quick-desc-'+medioId);
+  var montoEl=document.getElementById('quick-monto-'+medioId);
+  var monto=parseFloat(montoEl.value)||0;
+  if(!monto){ toast('Falta el monto',true); return; }
+  var desc=(descEl.value||'').trim()||(tipo==='ingreso'?(m.tipo==='Crédito'?'Abono / pago':'Ingreso'):(m.tipo==='Crédito'?'Cargo':'Egreso'));
+  var defaultCat=tipo==='ingreso'
+    ?(state.ingresos[0]?state.ingresos[0].concepto:'Ajuste')
+    :(cats[0]?cats[0].nombre:'Otros');
+  if(!state.gastos) state.gastos=[];
+  state.gastos.push({id:state.nextId++,tipo:tipo,desc:desc,cat:defaultCat,mp:m.nombre,monto:monto,fecha:defaultFechaForViewedMonth()});
+  descEl.value=''; montoEl.value='';
+  save(); renderSaldos(); renderBitacora(); renderIngresos(); renderResumen();
+  toast(tipo==='ingreso'?(m.tipo==='Crédito'?'Abono registrado':'Ingreso registrado'):(m.tipo==='Crédito'?'Cargo registrado':'Egreso registrado'));
+};
 window.setSaldoInicial=function(nombre,v){
   if(!state.saldosIniciales) state.saldosIniciales={};
   state.saldosIniciales[nombre]=parseFloat(v)||0;
