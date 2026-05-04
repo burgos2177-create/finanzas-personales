@@ -97,6 +97,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .tipo-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;letter-spacing:0.04em;text-transform:uppercase;flex-shrink:0}
 .tipo-badge.ing{background:rgba(31,209,150,0.15);color:var(--green)}
 .tipo-badge.egr{background:rgba(240,92,92,0.13);color:var(--red)}
+.saldo-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+.saldo-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.saldo-name{font-size:15px;font-weight:600;letter-spacing:-0.01em}
+.saldo-tipo{font-size:11px;color:var(--text3);margin-top:2px}
+.saldo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px;margin-bottom:8px}
+.saldo-stat{background:var(--bg3);border-radius:8px;padding:10px 12px;border:1px solid var(--border)}
+.saldo-stat-lbl{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px}
+.saldo-stat-val{font-size:16px;font-weight:600;font-family:var(--mono);letter-spacing:-0.02em}
+.saldo-stat-val.green{color:var(--green)}.saldo-stat-val.red{color:var(--red)}.saldo-stat-val.amber{color:var(--amber)}.saldo-stat-val.blue{color:var(--blue)}
+.saldo-stat input{width:100%;background:var(--bg4);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:14px;font-family:var(--mono);padding:4px 7px;outline:none;text-align:right}
+.saldo-stat input:focus{border-color:var(--green2)}
+.mp-edit-icono{width:38px;height:38px;border-radius:9px;border:1px solid transparent;text-align:center;font-size:20px;outline:none;flex-shrink:0;cursor:text}
+.mp-edit-icono:focus{border-color:var(--border2)}
 .field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px}
 .field input,.field select{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:13px;font-family:var(--font);outline:none;transition:border-color 0.15s}
 .field input:focus,.field select:focus{border-color:var(--green2)}
@@ -216,6 +229,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     <nav class="sidebar">
       <div class="nav-lbl">Visión</div>
       <div class="nav-item active" onclick="nav('resumen')"><span class="nav-icon">📊</span>Resumen</div>
+      <div class="nav-item" onclick="nav('saldos')"><span class="nav-icon">🏦</span>Saldos</div>
       <div class="nav-lbl">Entradas</div>
       <div class="nav-item" onclick="nav('ingresos')"><span class="nav-icon">💵</span>Ingresos</div>
       <div class="nav-lbl">Salidas</div>
@@ -248,6 +262,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="card-header"><div class="card-title">Gastos registrados (Bitácora)</div><div id="dash-bit-badge" class="card-badge"></div></div>
           <div id="dash-bit-cats"></div>
         </div>
+      </div>
+
+      <!-- SALDOS -->
+      <div id="s-saldos" class="section">
+        <div class="s-heading">Saldos <span id="lbl-saldos"></span></div>
+        <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Saldos calculados desde la bitácora. Configura saldo inicial (débito/digital/efectivo/apartado) o línea de crédito.</div>
+        <div id="saldos-list"></div>
       </div>
 
       <!-- INGRESOS -->
@@ -496,7 +517,7 @@ var DEFAULT_MES_STATE={
   distribucion:[
     {id:1,cat:'Gastos Casa',pct:35},{id:2,cat:'Comida/Gusto',pct:20},{id:3,cat:'Ahorro/Inversión',pct:20},
   ],
-  gastos:[],nextId:200
+  gastos:[],saldosIniciales:{},nextId:200
 };
 
 // ════════════════════════════════════════════════
@@ -548,6 +569,7 @@ async function loadMesFromFirestore(){
     var d = snap.data();
     if(!d.gastos) d.gastos=[];
     if(!d.nextId) d.nextId=200;
+    if(!d.saldosIniciales) d.saldosIniciales={};
     return d;
   }
   return JSON.parse(JSON.stringify(DEFAULT_MES_STATE));
@@ -633,12 +655,12 @@ window.syncBitTipo=populateCatSel;
 // ════════════════════════════════════════════════
 //  NAV
 // ════════════════════════════════════════════════
-var NAV_ORDER=['resumen','ingresos','egresos','distribucion','bitacora','medios','suscripciones','categorias'];
+var NAV_ORDER=['resumen','saldos','ingresos','egresos','distribucion','bitacora','medios','suscripciones','categorias'];
 function nav(name){
   document.querySelectorAll('.section').forEach(function(el){el.classList.remove('active');});
   document.querySelectorAll('.nav-item').forEach(function(el,i){el.classList.toggle('active',i===NAV_ORDER.indexOf(name));});
   document.getElementById('s-'+name).classList.add('active');
-  ({resumen:renderResumen,ingresos:renderIngresos,egresos:renderEgresos,
+  ({resumen:renderResumen,saldos:renderSaldos,ingresos:renderIngresos,egresos:renderEgresos,
     distribucion:renderDist,bitacora:renderBitacora,medios:renderMedios,
     suscripciones:renderSubs,categorias:renderCats}[name]||function(){})();
 }
@@ -997,26 +1019,60 @@ window.addGasto=function(){
   if(!state.gastos) state.gastos=[];
   state.gastos.push({id:state.nextId++,tipo:tipo,desc:desc,cat:cat,mp:mp,monto:monto,fecha:fecha});
   document.getElementById('bit-desc').value=''; document.getElementById('bit-monto').value='';
-  save(); renderBitacora(); renderIngresos(); renderResumen();
+  save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos();
   toast(tipo==='ingreso'?'Ingreso registrado':'Gasto registrado');
 };
-window.updGasto=function(id,f,v){ var g=state.gastos.find(function(g){return g.id===id;}); if(!g) return; if(f==='monto') g.monto=parseFloat(v)||0; else g[f]=(v||'').trim()||g[f]; save(); renderBitacora(); renderIngresos(); renderResumen(); };
-window.delGasto=function(id){ state.gastos=state.gastos.filter(function(g){return g.id!==id;}); save(); renderBitacora(); renderIngresos(); renderResumen(); toast('Eliminado'); };
+window.updGasto=function(id,f,v){ var g=state.gastos.find(function(g){return g.id===id;}); if(!g) return; if(f==='monto') g.monto=parseFloat(v)||0; else g[f]=(v||'').trim()||g[f]; save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos(); };
+window.delGasto=function(id){ state.gastos=state.gastos.filter(function(g){return g.id!==id;}); save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos(); toast('Eliminado'); };
 
 // ════════════════════════════════════════════════
 //  MEDIOS DE PAGO
 // ════════════════════════════════════════════════
 function renderMedios(){
   document.getElementById('mp-count-badge').textContent=medios.length+' medios';
+  var TIPOS=['Débito','Crédito','Efectivo','Digital','Apartado','Inversión'];
   document.getElementById('mp-list').innerHTML=medios.map(function(m){
-    return '<div class="mp-card">'+
-      '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+'">'+(m.icono||TIPO_ICONS[m.tipo]||'💳')+'</div>'+
-      '<div class="mp-body"><div class="mp-nombre" style="color:'+m.color+'">'+esc(m.nombre)+'</div>'+
-        '<div class="mp-tipo">'+esc(m.tipo)+(m.notas?' · '+esc(m.notas):'')+'</div></div>'+
-      '<input type="color" value="'+m.color+'" style="width:24px;height:24px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0" title="Cambiar color" onchange="updMedio('+m.id+',\'color\',this.value)">'+
-      '<button class="btn-del" onclick="delMedio('+m.id+')">✕</button></div>';
+    var tipoOpts=TIPOS.map(function(t){return '<option value="'+t+'"'+(t===m.tipo?' selected':'')+'>'+t+'</option>';}).join('');
+    var lineaField = m.tipo==='Crédito'
+      ? '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text3);padding-left:48px"><span>Línea de crédito $</span>'+
+        '<input class="inline-g-num" type="number" value="'+(m.lineaCredito||0)+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)" style="width:120px"></div>'
+      : '';
+    return '<div class="mp-card" style="flex-direction:column;align-items:stretch;gap:0">'+
+      '<div style="display:flex;align-items:center;gap:10px">'+
+        '<input type="text" class="mp-edit-icono" value="'+esc(m.icono||TIPO_ICONS[m.tipo]||'💳')+'" maxlength="2" onblur="updMedio('+m.id+',\'icono\',this.value)" style="background:'+m.color+'22;color:'+m.color+'">'+
+        '<div style="flex:1;display:flex;flex-direction:column;gap:3px;min-width:0">'+
+          '<input class="editable" value="'+esc(m.nombre)+'" style="font-size:14px;font-weight:500;color:'+m.color+';max-width:240px" onblur="updMedio('+m.id+',\'nombre\',this.value)">'+
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+            '<select class="sel-inline" onchange="updMedio('+m.id+',\'tipo\',this.value)">'+tipoOpts+'</select>'+
+            '<input class="editable" value="'+esc(m.notas||'')+'" placeholder="Notas (opcional)" style="font-size:11px;color:var(--text3);max-width:280px;flex:1" onblur="updMedio('+m.id+',\'notas\',this.value)">'+
+          '</div>'+
+        '</div>'+
+        '<input type="color" value="'+m.color+'" style="width:26px;height:26px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0" title="Cambiar color" onchange="updMedio('+m.id+',\'color\',this.value)">'+
+        '<button class="btn-del" onclick="delMedio('+m.id+')">✕</button>'+
+      '</div>'+
+      lineaField+
+    '</div>';
   }).join('');
 }
+window.updMedio=function(id,f,v){
+  var m=medios.find(function(m){return m.id===id;}); if(!m) return;
+  if(f==='lineaCredito'){ m.lineaCredito=parseFloat(v)||0; }
+  else if(f==='nombre'){
+    var nv=(v||'').trim(); if(!nv||nv===m.nombre){ save(); renderMedios(); return; }
+    if(medios.find(function(o){return o.id!==m.id && o.nombre.toLowerCase()===nv.toLowerCase();})){ toast('Nombre ya existe',true); renderMedios(); return; }
+    var oldName=m.nombre;
+    state.egresos.forEach(function(e){if(e.dest===oldName) e.dest=nv;});
+    (state.gastos||[]).forEach(function(g){if(g.mp===oldName) g.mp=nv;});
+    if(state.saldosIniciales && state.saldosIniciales[oldName]!==undefined){
+      state.saldosIniciales[nv]=state.saldosIniciales[oldName];
+      delete state.saldosIniciales[oldName];
+    }
+    m.nombre=nv;
+  }
+  else if(f==='icono'){ m.icono=(v||'').trim()||TIPO_ICONS[m.tipo]||'💳'; }
+  else { m[f]=v; }
+  save(); renderMedios(); renderSaldos(); populateMediosSels();
+};
 window.addMedio=function(){
   var n=document.getElementById('mp-nombre').value.trim(),t=document.getElementById('mp-tipo').value,
     c=document.getElementById('mp-color').value,ic=document.getElementById('mp-icono').value.trim()||TIPO_ICONS[t]||'💳',
@@ -1027,8 +1083,67 @@ window.addMedio=function(){
   document.getElementById('mp-nombre').value=''; document.getElementById('mp-notas').value=''; document.getElementById('mp-icono').value='';
   save(); renderMedios(); populateMediosSels(); toast('Medio agregado');
 };
-window.updMedio=function(id,f,v){ var m=medios.find(function(m){return m.id===id;}); if(!m) return; m[f]=v; save(); renderMedios(); populateMediosSels(); };
-window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;}); save(); renderMedios(); populateMediosSels(); toast('Eliminado'); };
+window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;}); save(); renderMedios(); renderSaldos(); populateMediosSels(); toast('Eliminado'); };
+
+// ════════════════════════════════════════════════
+//  SALDOS
+// ════════════════════════════════════════════════
+function movByMp(){
+  var m={};
+  (state.gastos||[]).forEach(function(g){
+    var mp=g.mp; if(!mp) return;
+    if(!m[mp]) m[mp]={ing:0,egr:0};
+    if(gTipo(g)==='ingreso') m[mp].ing+=g.monto; else m[mp].egr+=g.monto;
+  });
+  return m;
+}
+function saldoStat(lbl,val,cls){ return '<div class="saldo-stat"><div class="saldo-stat-lbl">'+lbl+'</div><div class="saldo-stat-val '+(cls||'')+'">'+val+'</div></div>'; }
+function renderSaldos(){
+  var lbl=document.getElementById('lbl-saldos'); if(!lbl) return;
+  lbl.innerHTML=mesLabel();
+  var mov=movByMp();
+  var saldosIni=state.saldosIniciales||{};
+  var html=medios.map(function(m){
+    var mv=mov[m.nombre]||{ing:0,egr:0};
+    var head='<div class="saldo-head">'+
+      '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+'">'+(m.icono||TIPO_ICONS[m.tipo]||'💳')+'</div>'+
+      '<div><div class="saldo-name" style="color:'+m.color+'">'+esc(m.nombre)+'</div>'+
+        '<div class="saldo-tipo">'+esc(m.tipo)+(m.notas?' · '+esc(m.notas):'')+'</div></div></div>';
+    if(m.tipo==='Crédito'){
+      var linea=m.lineaCredito||0;
+      var cargos=mv.egr, abonos=mv.ing;
+      var aPagar=cargos-abonos;
+      var disp=linea-aPagar;
+      var pctU=linea>0?Math.round(aPagar/linea*100):0;
+      var pctCls=pctU>=100?'over':pctU>=80?'warn':'';
+      var stats=
+        '<div class="saldo-stat"><div class="saldo-stat-lbl">Línea autorizada</div>'+
+          '<input type="number" value="'+linea+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)"></div>'+
+        saldoStat('Cargos del mes',fmt(cargos),'red')+
+        saldoStat('Abonos / pagos',fmt(abonos),'green')+
+        saldoStat('Saldo a pagar',fmt(aPagar),aPagar>0?'red':'green')+
+        saldoStat('Disponible',fmt(Math.max(disp,0)),disp<0?'red':'blue');
+      var bar='<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text3);min-width:75px">Uso línea '+pctU+'%</span><div style="flex:1"><div class="prog-track"><div class="prog-fill '+pctCls+'" style="width:'+Math.min(pctU,100)+'%"></div></div></div></div>';
+      return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+stats+'</div>'+bar+'</div>';
+    } else {
+      var ini=saldosIni[m.nombre]||0;
+      var saldoFinal=ini+mv.ing-mv.egr;
+      var stats=
+        '<div class="saldo-stat"><div class="saldo-stat-lbl">Saldo inicial</div>'+
+          '<input type="number" value="'+ini+'" step="0.01" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'+
+        saldoStat('+ Ingresos',fmt(mv.ing),'green')+
+        saldoStat('− Egresos',fmt(mv.egr),'red')+
+        saldoStat('Saldo actual',fmt(saldoFinal),saldoFinal<0?'red':'green');
+      return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+stats+'</div></div>';
+    }
+  }).join('');
+  document.getElementById('saldos-list').innerHTML=html||'<div class="empty">Sin medios de pago configurados. Ve a Medios de Pago para agregar.</div>';
+}
+window.setSaldoInicial=function(nombre,v){
+  if(!state.saldosIniciales) state.saldosIniciales={};
+  state.saldosIniciales[nombre]=parseFloat(v)||0;
+  save(); renderSaldos();
+};
 
 // ════════════════════════════════════════════════
 //  SUSCRIPCIONES
@@ -1068,7 +1183,7 @@ window.delCat=function(id){ cats=cats.filter(function(c){return c.id!==id;}); sa
 //  RENDER ALL
 // ════════════════════════════════════════════════
 function renderAll(){
-  renderResumen(); renderIngresos(); renderEgresos(); renderDist();
+  renderResumen(); renderSaldos(); renderIngresos(); renderEgresos(); renderDist();
   renderBitacora(); renderMedios(); renderSubs(); renderCats();
 }
 
@@ -1091,6 +1206,7 @@ window._appBoot = async function(){
     state  = await loadMesFromFirestore();
     if(!state.gastos) state.gastos=[];
     if(!state.nextId) state.nextId=200;
+    if(!state.saldosIniciales) state.saldosIniciales={};
     syncStatus('ok');
   } catch(e) {
     console.error(e);
