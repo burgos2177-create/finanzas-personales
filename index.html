@@ -2337,8 +2337,9 @@ function setupEmpresasListener(){
       var newList=snap.data().list||[];
       if(JSON.stringify(empresas)===JSON.stringify(newList)) return;
       empresas=newList;
+      globalCache=null; // invalidar cache para que las gráficas se reconstruyan con los nuevos saldos
       var sec=document.getElementById('s-global');
-      if(sec && sec.classList.contains('active')){ renderEmpresasSection(); renderCategoriasChart(); }
+      if(sec && sec.classList.contains('active')) renderGlobal();
     });
     empresasListenerAttached=true;
   } catch(e){ console.error('No se pudo conectar listener de empresas:',e); }
@@ -2440,8 +2441,9 @@ function setupFisicosListener(){
       var newList=snap.data().list||[];
       if(JSON.stringify(fisicos)===JSON.stringify(newList)) return;
       fisicos=newList;
+      globalCache=null;
       var sec=document.getElementById('s-global');
-      if(sec && sec.classList.contains('active')){ renderFisicosSection(); renderCategoriasChart(); }
+      if(sec && sec.classList.contains('active')) renderGlobal();
     });
     fisicosListenerAttached=true;
   } catch(e){ console.error('No se pudo conectar listener de fisicos:',e); }
