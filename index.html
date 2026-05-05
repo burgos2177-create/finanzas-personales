@@ -2303,7 +2303,7 @@ async function renderGlobal(){
   document.getElementById('global-range-label').textContent=(rangeLbl?rangeLbl.l:'')+' · '+filteredDaily.length+(filteredDaily.length===1?' punto':' puntos');
   document.getElementById('global-summary').innerHTML=
     mc('Patrimonio actual',fmt(current),current<0?'red':'green',last.date)+
-    mc('Cambio absoluto',(change>=0?'+':'')+fmt(change),change>=0?'green':'red','vs inicio del rango')+
+    mc('Cambio absoluto',(change>=0?'+':'')+fmt(change),change>=0?'green':'red','en '+(rangeLbl?rangeLbl.l:'rango'))+
     mc('Cambio %',(changePct>=0?'+':'')+changePct+'%',changePct>=0?'green':'red','desde '+first.date)+
     mc('Inversiones',fmt(last.inversion),'blue','en último snapshot');
   // KPIs (sobre la serie diaria filtrada)
@@ -2644,7 +2644,9 @@ function renderPatrimonioTotalChart(){
   var first=filteredDaily[0], last=filteredDaily[filteredDaily.length-1];
   var change=last.patrimonioTotal-first.patrimonioTotal;
   var changePct=first.patrimonioTotal!==0?Math.round(change/Math.abs(first.patrimonioTotal)*10000)/100:0;
-  document.getElementById('total-chart-label').textContent=fmt(last.patrimonioTotal)+' · '+(change>=0?'+':'')+fmt(change)+' ('+(changePct>=0?'+':'')+changePct+'%)';
+  var rangeLblObj=ranges.find(function(r){return r.k===totalRange;});
+  var rangeLblTxt=rangeLblObj?rangeLblObj.l:totalRange;
+  document.getElementById('total-chart-label').textContent=fmt(last.patrimonioTotal)+' · '+rangeLblTxt+': '+(change>=0?'+':'')+fmt(change)+' ('+(changePct>=0?'+':'')+changePct+'%)';
   var useShortFmt=(totalRange==='1y'||totalRange==='2y'||totalRange==='5y'||totalRange==='all');
   var labels=filteredDaily.map(function(s){var p=s.date.split('-'); return useShortFmt?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);});
   var rangeTicks={'1d':1,'1s':7,'15d':10,'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
