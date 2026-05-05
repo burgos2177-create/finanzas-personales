@@ -258,6 +258,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-lbl">Visión</div>
       <div class="nav-item active" onclick="nav('resumen')"><span class="nav-icon">📊</span>Resumen</div>
       <div class="nav-item" onclick="nav('saldos')"><span class="nav-icon">🏦</span>Saldos</div>
+      <div class="nav-item" onclick="nav('semanal')"><span class="nav-icon">📅</span>Semanal</div>
+      <div class="nav-item" onclick="nav('global')"><span class="nav-icon">🌐</span>Global</div>
       <div class="nav-item" onclick="nav('inversion')"><span class="nav-icon">📈</span>Inversión</div>
       <div class="nav-lbl">Entradas</div>
       <div class="nav-item" onclick="nav('ingresos')"><span class="nav-icon">💵</span>Ingresos</div>
@@ -299,6 +301,36 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Configura saldo inicial o línea de crédito. Usa los botones rápidos para registrar cargos/abonos sin ir a Bitácora.</div>
         <div class="mg" id="saldos-summary"></div>
         <div id="saldos-list"></div>
+      </div>
+
+      <!-- RESUMEN SEMANAL -->
+      <div id="s-semanal" class="section">
+        <div class="s-heading">Resumen Semanal <span id="lbl-semanal"></span></div>
+        <div class="alert alert-warn" style="margin-bottom:14px"><span>📅</span> Selecciona una semana del mes para ver su desglose. Las semanas son lunes a domingo; sólo cuentan los movimientos dentro del mes seleccionado.</div>
+        <div class="bit-toolbar" id="weekly-chips" style="margin-bottom:14px"></div>
+        <div class="mg" id="weekly-metrics"></div>
+        <div class="card"><div class="card-header"><div class="card-title">Movimientos por día</div></div><div class="ch-wrap" style="height:180px"><canvas id="weekly-chart"></canvas></div></div>
+        <div class="two-col">
+          <div class="card"><div class="card-header"><div class="card-title">Top categorías (egresos)</div></div><div id="weekly-cats"></div></div>
+          <div class="card"><div class="card-header"><div class="card-title">Top medios</div></div><div id="weekly-mps"></div></div>
+        </div>
+        <div class="card"><div class="card-header"><div class="card-title">Movimientos de la semana</div><div id="weekly-count" class="card-badge"></div></div><div id="weekly-list"></div></div>
+      </div>
+
+      <!-- RESUMEN GLOBAL -->
+      <div id="s-global" class="section">
+        <div class="s-heading">Resumen Global</div>
+        <div class="alert alert-warn" style="margin-bottom:14px"><span>🌐</span> Patrimonio neto a través del tiempo. Reconstruido desde todos los meses guardados. Haz clic en los rangos abajo de la gráfica.</div>
+        <div id="global-status" style="text-align:center;color:var(--text3);padding:20px;display:none">Cargando datos históricos…</div>
+        <div id="global-content">
+          <div class="mg" id="global-summary"></div>
+          <div class="card"><div class="card-header"><div class="card-title">Evolución del patrimonio</div><div id="global-range-label" class="card-badge"></div></div>
+            <div class="ch-wrap" style="height:280px"><canvas id="global-chart"></canvas></div>
+            <div class="bit-toolbar" id="global-ranges" style="margin-top:14px;justify-content:center"></div>
+          </div>
+          <div class="mg" id="global-kpis"></div>
+          <div class="card"><div class="card-header"><div class="card-title">Composición por categoría</div></div><div class="ch-wrap" style="height:240px"><canvas id="global-comp-chart"></canvas></div></div>
+        </div>
       </div>
 
       <!-- INVERSIÓN -->
@@ -598,7 +630,8 @@ var currentMes='Enero', currentAnio='2026';
 var state={}, subs=[], cats=[], medios=[], compras=[], globalConfig={usdRate:17.5};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
-var flujoChart=null, cuentasChart=null, bitChart=null;
+var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null;
+var selectedWeekIdx=null, globalRange='all', globalCache=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
 
@@ -624,6 +657,7 @@ function save(skipDelay){
   var delay = skipDelay ? 0 : 800;
   saveTimer = setTimeout(function(){
     if(!uid()){ syncStatus('offline'); return; }
+    globalCache=null;
     var mesData = JSON.parse(JSON.stringify(state));
     var p1 = window._setDoc(mesDocRef(), mesData);
     var p2 = window._setDoc(globalDocRef('subs'), {list: subs});
@@ -802,12 +836,12 @@ window.syncBitMsiVisibility=function(){
 // ════════════════════════════════════════════════
 //  NAV
 // ════════════════════════════════════════════════
-var NAV_ORDER=['resumen','saldos','inversion','ingresos','egresos','distribucion','bitacora','medios','suscripciones','categorias'];
+var NAV_ORDER=['resumen','saldos','semanal','global','inversion','ingresos','egresos','distribucion','bitacora','medios','suscripciones','categorias'];
 function nav(name){
   document.querySelectorAll('.section').forEach(function(el){el.classList.remove('active');});
   document.querySelectorAll('.nav-item').forEach(function(el,i){el.classList.toggle('active',i===NAV_ORDER.indexOf(name));});
   document.getElementById('s-'+name).classList.add('active');
-  ({resumen:renderResumen,saldos:renderSaldos,inversion:renderInversion,ingresos:renderIngresos,egresos:renderEgresos,
+  ({resumen:renderResumen,saldos:renderSaldos,semanal:renderSemanal,global:renderGlobal,inversion:renderInversion,ingresos:renderIngresos,egresos:renderEgresos,
     distribucion:renderDist,bitacora:renderBitacora,medios:renderMedios,
     suscripciones:renderSubs,categorias:renderCats}[name]||function(){})();
 }
@@ -817,7 +851,7 @@ async function changeMes(){
   currentMes=document.getElementById('mes-select').value;
   currentAnio=document.getElementById('anio-select').value;
   document.getElementById('header-sub').textContent=currentAnio;
-  bitFilterCat='Todos'; bitFilterMP='Todos'; bitFilterTipo='Todos';
+  bitFilterCat='Todos'; bitFilterMP='Todos'; bitFilterTipo='Todos'; selectedWeekIdx=null;
   syncStatus('saving');
   state = await loadMesFromFirestore();
   var changed=syncLinkedEgresosToSubs();
@@ -1793,6 +1827,245 @@ window.payCompra=function(id,delta){
   c.pagosHechos=Math.max(0,Math.min((c.meses||0),(c.pagosHechos||0)+delta));
   save(); renderSaldos();
 };
+
+// ════════════════════════════════════════════════
+//  RESUMEN SEMANAL
+// ════════════════════════════════════════════════
+function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function getMonthWeeks(anio, mesIdx){
+  var first=new Date(anio,mesIdx,1), last=new Date(anio,mesIdx+1,0);
+  var dow=first.getDay(); // 0=Sun .. 6=Sat
+  var offset=dow===0?-6:1-dow;
+  var d=new Date(first); d.setDate(d.getDate()+offset);
+  var weeks=[], idx=1;
+  while(d<=last){
+    var ws=new Date(d), we=new Date(d); we.setDate(we.getDate()+6);
+    var ms=new Date(Math.max(ws.getTime(), first.getTime()));
+    var me=new Date(Math.min(we.getTime(), last.getTime()));
+    weeks.push({idx:idx,start:ws,end:we,monthStart:ms,monthEnd:me});
+    d.setDate(d.getDate()+7); idx++;
+  }
+  return weeks;
+}
+function renderSemanal(){
+  document.getElementById('lbl-semanal').innerHTML=mesLabel();
+  var anio=parseInt(currentAnio,10), mesIdx=MESES.indexOf(currentMes);
+  var weeks=getMonthWeeks(anio,mesIdx);
+  if(!weeks.length){ document.getElementById('weekly-chips').innerHTML='<div class="empty">Sin semanas</div>'; return; }
+  // Default to current week if month is current; else last week of month
+  if(selectedWeekIdx===null || selectedWeekIdx>weeks.length){
+    var today=new Date();
+    if(today.getFullYear()===anio && today.getMonth()===mesIdx){
+      var match=weeks.find(function(w){return today>=w.start && today<=w.end;});
+      selectedWeekIdx=match?match.idx:weeks.length;
+    } else selectedWeekIdx=1;
+  }
+  var gastos=state.gastos||[];
+  // Render chips
+  document.getElementById('weekly-chips').innerHTML=weeks.map(function(w){
+    var ws=isoDate(w.monthStart), we=isoDate(w.monthEnd);
+    var inWeek=gastos.filter(function(g){return g.fecha && g.fecha>=ws && g.fecha<=we;});
+    var ing=inWeek.filter(function(g){return gTipo(g)==='ingreso';}).reduce(function(a,g){return a+g.monto;},0);
+    var egr=inWeek.filter(function(g){return gTipo(g)==='egreso';}).reduce(function(a,g){return a+g.monto;},0);
+    var bal=ing-egr;
+    var dlbl=w.monthStart.getDate()+'–'+w.monthEnd.getDate();
+    var balCol=bal>=0?'var(--green)':'var(--red)';
+    return '<div class="chip '+(w.idx===selectedWeekIdx?'active':'')+'" onclick="setWeekSel('+w.idx+')" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;line-height:1.2;padding:7px 12px"><span style="font-size:11px;font-weight:600">Semana '+w.idx+'</span><span style="font-size:10px;color:var(--text3)">'+dlbl+'</span><span style="font-size:11px;font-family:var(--mono);color:'+balCol+'">'+(bal>=0?'+':'')+fmt(bal)+'</span></div>';
+  }).join('');
+
+  var sel=weeks.find(function(w){return w.idx===selectedWeekIdx;})||weeks[0];
+  var ws=isoDate(sel.monthStart), we=isoDate(sel.monthEnd);
+  var weekGs=gastos.filter(function(g){return g.fecha && g.fecha>=ws && g.fecha<=we;});
+  var ing=weekGs.filter(function(g){return gTipo(g)==='ingreso';}).reduce(function(a,g){return a+g.monto;},0);
+  var egr=weekGs.filter(function(g){return gTipo(g)==='egreso';}).reduce(function(a,g){return a+g.monto;},0);
+  var bal=ing-egr;
+  var dias=Math.round((sel.monthEnd-sel.monthStart)/(1000*60*60*24))+1;
+  var avgEgr=dias>0?egr/dias:0;
+
+  document.getElementById('weekly-metrics').innerHTML=
+    mc('Ingresos',fmt(ing),'green',weekGs.filter(function(g){return gTipo(g)==='ingreso';}).length+' entradas')+
+    mc('Egresos',fmt(egr),'red',weekGs.filter(function(g){return gTipo(g)==='egreso';}).length+' entradas')+
+    mc('Balance',fmt(bal),bal>=0?'green':'red','ingresos − egresos')+
+    mc('Promedio diario',fmt(avgEgr),'amber',dias+' días en el mes');
+
+  // Daily breakdown
+  var byDay={};
+  weekGs.forEach(function(g){ if(!byDay[g.fecha]) byDay[g.fecha]={ing:0,egr:0}; if(gTipo(g)==='ingreso') byDay[g.fecha].ing+=g.monto; else byDay[g.fecha].egr+=g.monto; });
+  var allDates=[];
+  for(var d=new Date(sel.monthStart); d<=sel.monthEnd; d.setDate(d.getDate()+1)){ allDates.push(isoDate(d)); }
+  var labels=allDates.map(function(d){var p=d.split('-');return p[2]+'/'+p[1];});
+  var ingData=allDates.map(function(d){return (byDay[d]||{ing:0}).ing;});
+  var egrData=allDates.map(function(d){return (byDay[d]||{egr:0}).egr;});
+  if(weeklyChart) weeklyChart.destroy();
+  var wctx=document.getElementById('weekly-chart');
+  if(wctx) weeklyChart=new Chart(wctx,{type:'bar',data:{labels:labels,datasets:[
+    {label:'Ingresos',data:ingData,backgroundColor:'rgba(31,209,150,0.7)',borderColor:'#1fd196',borderWidth:1,borderRadius:4},
+    {label:'Egresos',data:egrData,backgroundColor:'rgba(240,92,92,0.7)',borderColor:'#f05c5c',borderWidth:1,borderRadius:4}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:'top',labels:{color:'#8b90a0',font:{size:11},boxWidth:12,padding:8}},tooltip:{callbacks:{label:function(c){return c.dataset.label+': '+fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return fmt(v);},color:'#555b6e',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10}},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+
+  // Top categorías (egresos)
+  var catTots={};
+  weekGs.filter(function(g){return gTipo(g)==='egreso';}).forEach(function(g){catTots[g.cat]=(catTots[g.cat]||0)+g.monto;});
+  var maxC=Math.max.apply(null,Object.values(catTots).concat([1]));
+  var catSorted=Object.entries(catTots).sort(function(a,b){return b[1]-a[1];}).slice(0,8);
+  document.getElementById('weekly-cats').innerHTML=catSorted.length?catSorted.map(function(e){return catSumRow(e[0],e[1],maxC,catColor(e[0]));}).join(''):'<div class="empty">Sin egresos esta semana</div>';
+
+  // Top medios
+  var mpTots={};
+  weekGs.forEach(function(g){var k=g.mp||'Sin medio'; if(!mpTots[k]) mpTots[k]={ing:0,egr:0}; if(gTipo(g)==='ingreso') mpTots[k].ing+=g.monto; else mpTots[k].egr+=g.monto;});
+  var mpKeys=Object.keys(mpTots).sort(function(a,b){return (mpTots[b].ing+mpTots[b].egr)-(mpTots[a].ing+mpTots[a].egr);});
+  document.getElementById('weekly-mps').innerHTML=mpKeys.length?mpKeys.map(function(k){var v=mpTots[k]; var net=v.ing-v.egr; return '<div class="cat-sumrow"><span style="font-size:13px">'+medioIcono(k)+'</span><div class="row-main"><div style="font-size:12px">'+esc(k)+'</div></div>'+(v.ing>0?'<span style="font-size:11px;font-family:var(--mono);color:var(--green);min-width:60px;text-align:right">+'+fmt(v.ing)+'</span>':'')+(v.egr>0?'<span style="font-size:11px;font-family:var(--mono);color:var(--red);min-width:60px;text-align:right">−'+fmt(v.egr)+'</span>':'')+'<span style="font-size:11px;font-family:var(--mono);color:'+(net>=0?'var(--green)':'var(--red)')+';min-width:70px;text-align:right;font-weight:500">'+(net>=0?'+':'')+fmt(net)+'</span></div>';}).join(''):'<div class="empty">Sin movimientos</div>';
+
+  // Lista
+  document.getElementById('weekly-count').textContent=weekGs.length+' movimiento'+(weekGs.length!==1?'s':'');
+  var sortedList=weekGs.slice().sort(function(a,b){return (b.fecha||'').localeCompare(a.fecha||'');});
+  document.getElementById('weekly-list').innerHTML=sortedList.length?sortedList.map(function(g){
+    var isI=gTipo(g)==='ingreso';
+    return '<div class="bit-entry"><div class="cat-dot" style="background:'+(isI?'#1fd196':catColor(g.cat))+'"></div><span class="tipo-badge '+(isI?'ing':'egr')+'">'+(isI?'ING':'EGR')+'</span><div class="bit-info"><div style="font-size:13px">'+esc(g.desc)+'</div><div class="bit-meta">'+fmtDate(g.fecha)+' · '+esc(g.cat)+(g.mp?' · '+esc(g.mp):'')+'</div></div><div class="bit-amount-disp" style="color:'+(isI?'var(--green)':'var(--red)')+'">'+(isI?'+':'−')+fmt(g.monto)+'</div></div>';
+  }).join(''):'<div class="empty">Sin movimientos</div>';
+}
+window.setWeekSel=function(i){ selectedWeekIdx=i; renderSemanal(); };
+
+// ════════════════════════════════════════════════
+//  RESUMEN GLOBAL
+// ════════════════════════════════════════════════
+async function loadAllMonthDocs(){
+  if(!uid()) return [];
+  try {
+    var coll=window._collection(window._db,'usuarios',uid(),'meses');
+    var snap=await window._getDocs(coll);
+    var months=[];
+    snap.forEach(function(doc){
+      var parts=doc.id.split('_'); if(parts.length<2) return;
+      var y=parseInt(parts[0],10), m=MESES.indexOf(parts[1]);
+      if(isNaN(y)||m<0) return;
+      months.push({id:doc.id,anio:y,mes:m,data:doc.data()});
+    });
+    months.sort(function(a,b){return (a.anio*12+a.mes)-(b.anio*12+b.mes);});
+    return months;
+  } catch(e){ console.error(e); return []; }
+}
+function valorPosAtDate(p, dateRef){
+  if(p.subtipo==='PF'||p.subtipo==='TF') return valorBase(p, dateRef)+(p.ajuste||0);
+  var hist=(p.historia||[]).slice().sort(function(a,b){return (a.fecha||'').localeCompare(b.fecha||'');});
+  if(!hist.length) return valorPos(p);
+  var dStr=typeof dateRef==='string'?dateRef:isoDate(dateRef);
+  var best=null;
+  for(var i=0;i<hist.length;i++){ if(hist[i].fecha<=dStr) best=hist[i]; else break; }
+  return best?best.valor:hist[0].valor;
+}
+function snapshotAtMonthEnd(month){
+  var endDate=new Date(month.anio,month.mes+1,0);
+  var ini=month.data.saldosIniciales||{};
+  var gastos=month.data.gastos||[];
+  var perMp={};
+  gastos.forEach(function(g){ if(!g.mp) return; if(!perMp[g.mp]) perMp[g.mp]={ing:0,egr:0}; if((g.tipo||'egreso')==='ingreso') perMp[g.mp].ing+=g.monto; else perMp[g.mp].egr+=g.monto; });
+  var liquid=0, deuda=0, inv=0;
+  medios.forEach(function(m){
+    if(m.tipo==='Inversión'){
+      (m.posiciones||[]).forEach(function(p){ inv+=valorPosAtDate(p,endDate); });
+      return;
+    }
+    var mv=perMp[m.nombre]||{ing:0,egr:0};
+    var iniBal=ini[m.nombre]||0;
+    if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr-mv.ing,0);
+    else liquid+=iniBal+mv.ing-mv.egr;
+  });
+  return {date:isoDate(endDate),liquid:liquid,deuda:deuda,inversion:inv,patrimonio:liquid+inv-deuda,
+    ingresoMes:gastos.filter(function(g){return (g.tipo||'egreso')==='ingreso';}).reduce(function(a,g){return a+g.monto;},0),
+    egresoMes:gastos.filter(function(g){return (g.tipo||'egreso')==='egreso';}).reduce(function(a,g){return a+g.monto;},0)};
+}
+function buildPatrimonioSeries(months){
+  return months.map(snapshotAtMonthEnd);
+}
+function filterSeriesByRange(series, range){
+  if(!series.length) return series;
+  var last=new Date(series[series.length-1].date);
+  var cutoff;
+  switch(range){
+    case '1m': cutoff=new Date(last); cutoff.setMonth(cutoff.getMonth()-1); break;
+    case '3m': cutoff=new Date(last); cutoff.setMonth(cutoff.getMonth()-3); break;
+    case '6m': cutoff=new Date(last); cutoff.setMonth(cutoff.getMonth()-6); break;
+    case 'ytd': cutoff=new Date(last.getFullYear(),0,1); break;
+    case '1y': cutoff=new Date(last); cutoff.setFullYear(cutoff.getFullYear()-1); break;
+    case '2y': cutoff=new Date(last); cutoff.setFullYear(cutoff.getFullYear()-2); break;
+    case '5y': cutoff=new Date(last); cutoff.setFullYear(cutoff.getFullYear()-5); break;
+    case 'all': default: return series;
+  }
+  var cstr=isoDate(cutoff);
+  return series.filter(function(s){return s.date>=cstr;});
+}
+async function renderGlobal(){
+  var status=document.getElementById('global-status');
+  var content=document.getElementById('global-content');
+  if(!globalCache){
+    if(status) status.style.display='block';
+    if(content) content.style.display='none';
+    var months=await loadAllMonthDocs();
+    globalCache={months:months,series:buildPatrimonioSeries(months)};
+    if(status) status.style.display='none';
+    if(content) content.style.display='block';
+  }
+  var series=globalCache.series;
+  if(!series.length){
+    document.getElementById('global-summary').innerHTML='<div class="empty" style="grid-column:1/-1">Sin datos históricos. Guarda al menos un mes para ver el resumen global.</div>';
+    return;
+  }
+  var ranges=[{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
+  document.getElementById('global-ranges').innerHTML=ranges.map(function(r){return '<div class="chip '+(r.k===globalRange?'active':'')+'" onclick="setGlobalRange(\''+r.k+'\')">'+r.l+'</div>';}).join('');
+  var filtered=filterSeriesByRange(series, globalRange);
+  var first=filtered[0]||series[0], last=filtered[filtered.length-1]||series[series.length-1];
+  var current=last.patrimonio;
+  var change=current-first.patrimonio;
+  var changePct=first.patrimonio!==0?Math.round(change/Math.abs(first.patrimonio)*10000)/100:0;
+  var rangeLbl=ranges.find(function(r){return r.k===globalRange;});
+  document.getElementById('global-range-label').textContent=(rangeLbl?rangeLbl.l:'')+' · '+filtered.length+(filtered.length===1?' punto':' puntos');
+  document.getElementById('global-summary').innerHTML=
+    mc('Patrimonio actual',fmt(current),current<0?'red':'green',last.date)+
+    mc('Cambio absoluto',(change>=0?'+':'')+fmt(change),change>=0?'green':'red','vs inicio del rango')+
+    mc('Cambio %',(changePct>=0?'+':'')+changePct+'%',changePct>=0?'green':'red','desde '+first.date)+
+    mc('Inversiones',fmt(last.inversion),'blue','en último snapshot');
+  // KPIs
+  var maxV=Math.max.apply(null,filtered.map(function(s){return s.patrimonio;}));
+  var minV=Math.min.apply(null,filtered.map(function(s){return s.patrimonio;}));
+  var bestM=null, worstM=null;
+  for(var i=1;i<filtered.length;i++){
+    var diff=filtered[i].patrimonio-filtered[i-1].patrimonio;
+    if(bestM===null||diff>bestM.diff) bestM={diff:diff,date:filtered[i].date};
+    if(worstM===null||diff<worstM.diff) worstM={diff:diff,date:filtered[i].date};
+  }
+  // Drawdown máximo
+  var peak=filtered[0].patrimonio, ddMax=0;
+  filtered.forEach(function(s){ if(s.patrimonio>peak) peak=s.patrimonio; var dd=peak>0?(s.patrimonio-peak)/peak*100:0; if(dd<ddMax) ddMax=dd; });
+  document.getElementById('global-kpis').innerHTML=
+    mc('Máximo',fmt(maxV),'green')+
+    mc('Mínimo',fmt(minV),'red')+
+    mc('Mejor mes',bestM?(bestM.diff>=0?'+':'')+fmt(bestM.diff):'—',bestM&&bestM.diff>=0?'green':'red',bestM?bestM.date:'')+
+    mc('Drawdown máx',Math.round(ddMax*100)/100+'%',ddMax<-10?'red':'amber','desde pico');
+  // Chart
+  if(globalChart) globalChart.destroy();
+  var ctx=document.getElementById('global-chart');
+  if(ctx){
+    var labels=filtered.map(function(s){var p=s.date.split('-');return p[2]+'/'+p[1]+'/'+p[0].slice(2);});
+    globalChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
+      {label:'Patrimonio',data:filtered.map(function(s){return s.patrimonio;}),borderColor:change>=0?'#1fd196':'#f05c5c',backgroundColor:(change>=0?'rgba(31,209,150,0.1)':'rgba(240,92,92,0.1)'),fill:true,tension:0.3,pointRadius:filtered.length<24?3:1,pointBackgroundColor:change>=0?'#1fd196':'#f05c5c',borderWidth:2}
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:45},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+  }
+  // Composition chart: stacked bars per month (liquid, inversion, -deuda)
+  if(globalCompChart) globalCompChart.destroy();
+  var ctx2=document.getElementById('global-comp-chart');
+  if(ctx2){
+    var labels2=filtered.map(function(s){var p=s.date.split('-');return p[1]+'/'+p[0].slice(2);});
+    globalCompChart=new Chart(ctx2,{type:'bar',data:{labels:labels2,datasets:[
+      {label:'Líquidos',data:filtered.map(function(s){return s.liquid;}),backgroundColor:'rgba(31,209,150,0.6)',stack:'a'},
+      {label:'Inversiones',data:filtered.map(function(s){return s.inversion;}),backgroundColor:'rgba(91,156,246,0.6)',stack:'a'},
+      {label:'Deuda',data:filtered.map(function(s){return -s.deuda;}),backgroundColor:'rgba(240,92,92,0.6)',stack:'a'}
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:'top',labels:{color:'#8b90a0',font:{size:11},boxWidth:12,padding:8}},tooltip:{callbacks:{label:function(c){return c.dataset.label+': '+fmt(Math.abs(c.raw));}}}},scales:{y:{stacked:true,ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{stacked:true,ticks:{color:'#8b90a0',font:{size:10},maxRotation:45},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+  }
+}
+window.setGlobalRange=function(r){ globalRange=r; renderGlobal(); };
+window.refreshGlobal=function(){ globalCache=null; renderGlobal(); };
+
 
 function buildDestinoSelect(medioId,p){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return '';
