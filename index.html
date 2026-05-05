@@ -839,7 +839,7 @@ function fmtDate(d){ if(!d) return '—'; var p=d.split('-'); return p[2]+'/'+p[
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function totIngresos(){ return state.ingresos.reduce(function(a,i){return a+i.monto;},0); }
 function totPresup(){ return state.egresos.reduce(function(a,e){return a+e.presup;},0); }
-function totGastados(){ return state.egresos.reduce(function(a,e){return a+(e.gastado||0);},0); }
+function totGastados(){ return state.egresos.reduce(function(a,e){return a+gastadoEgreso(e);},0); }
 function disponible(){ return totIngresos()-totPresup(); }
 function gTipo(g){ return g.tipo||'egreso'; }
 function ingresosBit(){ return (state.gastos||[]).filter(function(g){return gTipo(g)==='ingreso';}); }
@@ -1195,7 +1195,8 @@ function renderEgresos(){
     mc('Presupuestado',fmt(fijos),'')+mc('Gastado',fmt(gast),gast>fijos?'red':'blue')+
     mc(gast>fijos?'Excedido':'Restante',fmt(Math.abs(fijos-gast)),gast>fijos?'red':'green');
   document.getElementById('egresos-list').innerHTML=state.egresos.map(function(e){
-    var pct=e.presup>0?Math.round((e.gastado||0)/e.presup*100):0;
+    var gastadoVal=gastadoEgreso(e);
+    var pct=e.presup>0?Math.round(gastadoVal/e.presup*100):0;
     var cls=pct>=100?'over':pct>=80?'warn':'';
     var destOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===e.dest?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
     var linked=!!e.linkedToSubs;
@@ -1206,11 +1207,27 @@ function renderEgresos(){
     var presupInput=linked
       ? '<input type="number" class="editable editable-num" value="'+e.presup+'" disabled title="Auto: total de Suscripciones" style="opacity:0.6;cursor:not-allowed;border-bottom-style:dotted">'
       : edtNum(e.presup,'updEg('+e.id+',\'presup\',this.value)');
+    // Selector de vinculación a cat/subcat para gastado
+    var catLinked=!!e.linkedCat;
+    var linkLbl=catLinked?(e.linkedCat+(e.linkedSubcat?' › '+e.linkedSubcat:'')):'';
+    var linkSelOpts='<option value="">— manual —</option>';
+    cats.filter(function(c){return !c.parentId;}).forEach(function(parent){
+      var keyP=parent.nombre;
+      linkSelOpts+='<option value="'+esc(keyP)+'"'+(e.linkedCat===parent.nombre&&!e.linkedSubcat?' selected':'')+'>'+esc(parent.nombre)+'</option>';
+      cats.filter(function(c){return c.parentId===parent.id;}).forEach(function(s){
+        var val=parent.nombre+'|'+s.nombre;
+        linkSelOpts+='<option value="'+esc(val)+'"'+(e.linkedCat===parent.nombre&&e.linkedSubcat===s.nombre?' selected':'')+'>↳ '+esc(parent.nombre)+' › '+esc(s.nombre)+'</option>';
+      });
+    });
+    var gastadoInput=catLinked
+      ? '<input class="inline-g-num" type="number" value="'+gastadoVal+'" disabled title="Auto: vinculado a '+esc(linkLbl)+'" style="opacity:0.6;cursor:not-allowed;border-style:dotted">'
+      : '<input class="inline-g-num" type="number" value="'+(e.gastado||0)+'" min="0" onchange="updEg('+e.id+',\'gastado\',this.value)" onblur="updEg('+e.id+',\'gastado\',this.value)">';
     return '<div class="row" style="flex-direction:column;align-items:stretch;gap:6px;padding-bottom:12px">'+
       '<div style="display:flex;align-items:center;gap:8px">'+
         '<select class="sel-inline" onchange="updEg('+e.id+',\'dest\',this.value)">'+destOpts+'</select>'+
         '<div class="row-main">'+edt(e.concepto,'max-width:200px','updEg('+e.id+',\'concepto\',this.value)')+
           (linked?'<span style="font-size:10px;color:var(--green);background:rgba(31,209,150,0.12);padding:2px 7px;border-radius:5px;margin-left:6px;letter-spacing:0.04em">AUTO-SUBS</span>':'')+
+          (catLinked?'<span style="font-size:10px;color:var(--blue);background:rgba(91,156,246,0.12);padding:2px 7px;border-radius:5px;margin-left:6px;letter-spacing:0.04em">AUTO '+esc(linkLbl)+'</span>':'')+
         '</div>'+
         linkBtn+
         '<div style="font-size:11px;color:var(--text3)">P:</div>'+
@@ -1218,12 +1235,34 @@ function renderEgresos(){
         '<button class="btn-del" onclick="delEgreso('+e.id+')">✕</button></div>'+
       '<div style="display:flex;align-items:center;gap:8px;padding-left:4px">'+
         '<span style="font-size:11px;color:var(--text3);width:52px">Gastado:</span>'+
-        '<input class="inline-g-num" type="number" value="'+(e.gastado||0)+'" min="0" onchange="updEg('+e.id+',\'gastado\',this.value)" onblur="updEg('+e.id+',\'gastado\',this.value)">'+
+        '<select class="sel-inline" onchange="setEgresoCatLink('+e.id+',this.value)" title="Vincular gastado a una categoría/subcategoría">'+linkSelOpts+'</select>'+
+        gastadoInput+
         '<span style="font-size:11px;font-family:var(--mono);color:'+(pct>=100?'var(--red)':pct>=80?'var(--amber)':'var(--text3)')+'">'+pct+'%</span>'+
         '<div style="flex:1"><div class="prog-track"><div class="prog-fill '+cls+'" style="width:'+Math.min(pct,100)+'%"></div></div></div></div>'+
     '</div>';
   }).join('');
 }
+function gastadoEgreso(e){
+  if(!e.linkedCat) return e.gastado||0;
+  return (state.gastos||[]).filter(function(g){
+    if((g.tipo||'egreso')!=='egreso') return false;
+    if(g.cat!==e.linkedCat) return false;
+    if(e.linkedSubcat && (g.subcat||'')!==e.linkedSubcat) return false;
+    return true;
+  }).reduce(function(a,g){return a+g.monto;},0);
+}
+window.setEgresoCatLink=function(id,val){
+  var o=state.egresos.find(function(e){return e.id===id;}); if(!o) return;
+  if(!val){ delete o.linkedCat; delete o.linkedSubcat; }
+  else {
+    var parts=val.split('|');
+    o.linkedCat=parts[0];
+    if(parts.length>1) o.linkedSubcat=parts[1];
+    else delete o.linkedSubcat;
+  }
+  save(); renderEgresos(); renderResumen();
+  toast(val?'Gastado vinculado a '+(o.linkedCat+(o.linkedSubcat?' › '+o.linkedSubcat:'')):'Desvinculado');
+};
 window.updEg=function(id,f,v){ var o=state.egresos.find(function(e){return e.id===id;}); if(!o) return; if(f==='presup' && o.linkedToSubs) return; if(f==='presup'||f==='gastado') o[f]=parseFloat(v)||0; else o[f]=(v||'').trim()||o[f]; save(); renderEgresos(); };
 window.toggleEgSubsLink=function(id){
   var o=state.egresos.find(function(e){return e.id===id;}); if(!o) return;
@@ -3355,7 +3394,14 @@ window.updCat=function(id,f,v){
     if(!nv||nv===c.nombre){ renderCats(); return; }
     if(cats.find(function(o){return o.id!==c.id && o.nombre.toLowerCase()===nv.toLowerCase();})){ toast('Nombre ya existe',true); renderCats(); return; }
     var oldName=c.nombre;
-    (state.gastos||[]).forEach(function(g){if(g.cat===oldName) g.cat=nv;});
+    (state.gastos||[]).forEach(function(g){
+      if(g.cat===oldName) g.cat=nv;
+      if(g.subcat===oldName) g.subcat=nv;
+    });
+    (state.egresos||[]).forEach(function(eg){
+      if(eg.linkedCat===oldName) eg.linkedCat=nv;
+      if(eg.linkedSubcat===oldName) eg.linkedSubcat=nv;
+    });
     c.nombre=nv;
   } else if(f==='color'){ c.color=v; }
   save(); renderCats(); populateCatSel();
@@ -3374,9 +3420,17 @@ window.addCat=function(){
   save(); renderCats(); populateCatSel(); toast('Categoría agregada');
 };
 window.delCat=function(id){
+  var deleted=cats.find(function(c){return c.id===id;});
   cats=cats.filter(function(c){return c.id!==id;});
   // Si la eliminada era padre, los hijos quedan como top-level (limpiamos parentId huérfano)
   cats.forEach(function(c){ if(c.parentId===id) delete c.parentId; });
+  // Limpiar vínculos en egresos si apuntaban a la cat eliminada
+  if(deleted){
+    (state.egresos||[]).forEach(function(eg){
+      if(eg.linkedCat===deleted.nombre) delete eg.linkedCat;
+      if(eg.linkedSubcat===deleted.nombre) delete eg.linkedSubcat;
+    });
+  }
   save(); renderCats(); populateCatSel(); toast('Eliminada');
 };
 
