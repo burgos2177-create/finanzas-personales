@@ -2202,6 +2202,20 @@ function buildPatrimonioSeriesDaily(months){
       d.setDate(d.getDate()+1);
     }
   });
+  // ─── HACK TEMPORAL ───────────────────────────────────────────────
+  // Aplanar todos los puntos previos al 2026-05-04 con el valor de
+  // ese día (cuando se cargó todo el patrimonio inicial). Quitar este
+  // bloque cuando haya historial real anterior.
+  var FLATTEN_BEFORE='2026-05-04';
+  var anchor=null;
+  for(var k=0;k<points.length;k++){ if(points[k].date===FLATTEN_BEFORE){ anchor=points[k]; break; } }
+  if(anchor){
+    var fields=['liquid','deuda','inversion','empresas','fisicos','patrimonio','patrimonioTotal'];
+    for(var j=0;j<points.length;j++){
+      if(points[j].date<FLATTEN_BEFORE){ fields.forEach(function(f){ points[j][f]=anchor[f]; }); }
+    }
+  }
+  // ─── FIN HACK ─────────────────────────────────────────────────────
   return points;
 }
 function filterSeriesByRange(series, range){
