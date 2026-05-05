@@ -378,6 +378,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="ch-wrap" style="height:280px"><canvas id="cat-chart"></canvas></div>
           <div id="cat-legend" style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px"></div>
         </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Evolución del patrimonio total</div><div id="total-chart-label" class="card-badge"></div></div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Suma de las 5 categorías (líquidos + inversiones + empresas + físicos − deuda) según el rango seleccionado arriba.</div>
+          <div class="ch-wrap" style="height:280px"><canvas id="total-chart"></canvas></div>
+        </div>
       </div>
 
       <!-- INVERSIÓN -->
@@ -684,7 +689,7 @@ var state={}, subs=[], cats=[], medios=[], compras=[], empresas=[], fisicos=[], 
 var FISICO_CATS={Auto:'🚗',Casa:'🏠',Terreno:'🏞️',Otro:'📦'};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
-var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null;
+var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null;
 var selectedWeekIdx=null, globalRange='all', globalCache=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
@@ -2134,6 +2139,33 @@ function snapshotAtMonthEnd(month){
 function buildPatrimonioSeries(months){
   return months.map(snapshotAtMonthEnd);
 }
+function valorEmpresaAtDate(e, d){
+  var dStr=isoDate(d);
+  var hist=e.historia||[];
+  var best=null;
+  for(var i=0;i<hist.length;i++){
+    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>best.fecha) best=hist[i]; }
+  }
+  if(!best) return 0;
+  var s=best.saldo||0;
+  if(e.moneda==='USD') s*=getUsdRate();
+  return s;
+}
+function valorFisicoAtDate(f, d){
+  var dStr=isoDate(d);
+  var hist=f.historia||[];
+  var best=null;
+  for(var i=0;i<hist.length;i++){
+    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>best.fecha) best=hist[i]; }
+  }
+  if(!best) return 0;
+  var tasa=(f.tasaAnual||0)/100;
+  var elapsed=(d.getTime()-new Date(best.fecha).getTime())/(1000*60*60*24);
+  if(elapsed<0) elapsed=0;
+  var v=(best.valor||0)*(1+tasa*elapsed/365);
+  if(f.moneda==='USD') v*=getUsdRate();
+  return v;
+}
 function buildPatrimonioSeriesDaily(months){
   var points=[];
   var today=new Date();
@@ -2164,7 +2196,9 @@ function buildPatrimonioSeriesDaily(months){
         if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr-mv.ing,0);
         else liq+=iniBal+mv.ing-mv.egr;
       });
-      points.push({date:dStr,liquid:liq,deuda:deuda,inversion:inv,patrimonio:liq+inv-deuda});
+      var emp=empresas.reduce(function(a,e){return a+valorEmpresaAtDate(e,d);},0);
+      var fis=fisicos.reduce(function(a,f){return a+valorFisicoAtDate(f,d);},0);
+      points.push({date:dStr,liquid:liq,deuda:deuda,inversion:inv,empresas:emp,fisicos:fis,patrimonio:liq+inv-deuda,patrimonioTotal:liq+inv-deuda+emp+fis});
       d.setDate(d.getDate()+1);
     }
   });
@@ -2544,6 +2578,30 @@ function renderCategoriasChart(){
     var pct=totActivos>0?Math.round(Math.abs(d.val)/totActivos*1000)/10:0;
     return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px"><span style="width:10px;height:10px;border-radius:2px;background:'+d.col+';flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">'+d.lbl+'</div><div style="font-size:14px;font-family:var(--mono);font-weight:600;color:'+d.col+'">'+fmt(d.val)+'</div></div>'+(d.lbl!=='Deuda'?'<div style="font-size:10px;color:var(--text3);font-family:var(--mono)">'+pct+'%</div>':'')+'</div>';
   }).join('');
+  // Render del chart de evolución del patrimonio TOTAL (5 categorías sumadas)
+  renderPatrimonioTotalChart();
+}
+function renderPatrimonioTotalChart(){
+  var ctx=document.getElementById('total-chart'); if(!ctx) return;
+  if(!globalCache||!globalCache.seriesDaily||!globalCache.seriesDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
+  var filteredDaily=filterSeriesByRange(globalCache.seriesDaily, globalRange);
+  if(!filteredDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
+  var first=filteredDaily[0], last=filteredDaily[filteredDaily.length-1];
+  var change=last.patrimonioTotal-first.patrimonioTotal;
+  var changePct=first.patrimonioTotal!==0?Math.round(change/Math.abs(first.patrimonioTotal)*10000)/100:0;
+  document.getElementById('total-chart-label').textContent=fmt(last.patrimonioTotal)+' · '+(change>=0?'+':'')+fmt(change)+' ('+(changePct>=0?'+':'')+changePct+'%)';
+  var useShortFmt=(globalRange==='1y'||globalRange==='2y'||globalRange==='5y'||globalRange==='all');
+  var labels=filteredDaily.map(function(s){var p=s.date.split('-'); return useShortFmt?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);});
+  var rangeTicks={'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
+  var maxTicks=rangeTicks[globalRange]||12;
+  var n=filteredDaily.length;
+  var ptR=n<31?2.5:(n<92?1.2:(n<366?0.6:0));
+  var col=change>=0?'#9b8ef7':'#f05c5c';
+  var bgcol=change>=0?'rgba(155,142,247,0.1)':'rgba(240,92,92,0.1)';
+  if(totalChart) totalChart.destroy();
+  totalChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
+    {label:'Patrimonio total',data:filteredDaily.map(function(s){return s.patrimonioTotal;}),borderColor:col,backgroundColor:bgcol,fill:true,tension:0.25,pointRadius:ptR,pointHoverRadius:4,pointBackgroundColor:col,borderWidth:2}
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var s=filteredDaily[i]; if(!s) return ''; var p=s.date.split('-'); return p[2]+'/'+p[1]+'/'+p[0];},label:function(c){var i=c.dataIndex; var s=filteredDaily[i]; var lines=[fmt(c.raw)]; if(s){ lines.push('  Líquidos '+fmt(s.liquid)); lines.push('  Inversiones '+fmt(s.inversion)); lines.push('  Empresas '+fmt(s.empresas)); lines.push('  Físicos '+fmt(s.fisicos)); lines.push('  Deuda '+fmt(s.deuda));} return lines;}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:maxTicks},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
 }
 
 
