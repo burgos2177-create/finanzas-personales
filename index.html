@@ -2142,28 +2142,58 @@ function buildPatrimonioSeries(months){
 }
 function valorEmpresaAtDate(e, d){
   var dStr=isoDate(d);
+  var luStr=e.lastUpdate?String(e.lastUpdate).slice(0,10):null;
   var hist=e.historia||[];
   var best=null;
   for(var i=0;i<hist.length;i++){
     if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>best.fecha) best=hist[i]; }
   }
-  if(!best) return 0;
-  var s=best.saldo||0;
-  if(e.moneda==='USD') s*=getUsdRate();
-  return s;
+  // Si lastUpdate es más reciente que best y ≤ d, el saldo actual es la verdad para d
+  // (cubre el caso de actualización externa sin entrada en historia)
+  if(luStr && luStr<=dStr && (!best || luStr>=best.fecha)){
+    var s=e.saldo||0;
+    if(e.moneda==='USD') s*=getUsdRate();
+    return s;
+  }
+  if(!best){
+    if(!hist.length){
+      // Sin historia: asumir saldo actual como flat
+      var s2=e.saldo||0;
+      if(e.moneda==='USD') s2*=getUsdRate();
+      return s2;
+    }
+    return 0;
+  }
+  var s3=best.saldo||0;
+  if(e.moneda==='USD') s3*=getUsdRate();
+  return s3;
 }
 function valorFisicoAtDate(f, d){
   var dStr=isoDate(d);
+  var luStr=f.lastUpdate?String(f.lastUpdate).slice(0,10):null;
   var hist=f.historia||[];
   var best=null;
   for(var i=0;i<hist.length;i++){
     if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>best.fecha) best=hist[i]; }
   }
-  if(!best) return 0;
+  // Misma lógica: si lastUpdate es más reciente, anclar al valor actual
+  var anchorDate, anchorVal;
+  if(luStr && luStr<=dStr && (!best || luStr>=best.fecha)){
+    anchorDate=luStr; anchorVal=f.valor||0;
+  } else if(best){
+    anchorDate=best.fecha; anchorVal=best.valor||0;
+  } else {
+    if(!hist.length){
+      var v0=f.valor||0;
+      if(f.moneda==='USD') v0*=getUsdRate();
+      return v0;
+    }
+    return 0;
+  }
   var tasa=(f.tasaAnual||0)/100;
-  var elapsed=(d.getTime()-new Date(best.fecha).getTime())/(1000*60*60*24);
+  var elapsed=(d.getTime()-new Date(anchorDate).getTime())/(1000*60*60*24);
   if(elapsed<0) elapsed=0;
-  var v=(best.valor||0)*(1+tasa*elapsed/365);
+  var v=anchorVal*(1+tasa*elapsed/365);
   if(f.moneda==='USD') v*=getUsdRate();
   return v;
 }
