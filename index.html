@@ -2134,6 +2134,42 @@ function snapshotAtMonthEnd(month){
 function buildPatrimonioSeries(months){
   return months.map(snapshotAtMonthEnd);
 }
+function buildPatrimonioSeriesDaily(months){
+  var points=[];
+  var today=new Date();
+  months.forEach(function(month){
+    var anio=month.anio, mes=month.mes;
+    var firstDay=new Date(anio,mes,1);
+    var lastDay=new Date(anio,mes+1,0);
+    if(firstDay>today) return;
+    var endOfWalk=lastDay>today?today:lastDay;
+    var ini=month.data.saldosIniciales||{};
+    var gastos=month.data.gastos||[];
+    var d=new Date(firstDay);
+    while(d<=endOfWalk){
+      var dStr=isoDate(d);
+      var perMp={};
+      gastos.forEach(function(g){
+        if(!g.fecha||g.fecha>dStr) return;
+        if(!g.mp) return;
+        if(!perMp[g.mp]) perMp[g.mp]={ing:0,egr:0};
+        if((g.tipo||'egreso')==='ingreso') perMp[g.mp].ing+=g.monto;
+        else perMp[g.mp].egr+=g.monto;
+      });
+      var liq=0, deuda=0, inv=0;
+      medios.forEach(function(m){
+        if(m.tipo==='Inversión'){ (m.posiciones||[]).forEach(function(p){ inv+=valorPosAtDate(p,d); }); return; }
+        var iniBal=ini[m.nombre]||0;
+        var mv=perMp[m.nombre]||{ing:0,egr:0};
+        if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr-mv.ing,0);
+        else liq+=iniBal+mv.ing-mv.egr;
+      });
+      points.push({date:dStr,liquid:liq,deuda:deuda,inversion:inv,patrimonio:liq+inv-deuda});
+      d.setDate(d.getDate()+1);
+    }
+  });
+  return points;
+}
 function filterSeriesByRange(series, range){
   if(!series.length) return series;
   var last=new Date(series[series.length-1].date);
@@ -2161,56 +2197,60 @@ async function renderGlobal(){
     if(status) status.style.display='block';
     if(content) content.style.display='none';
     var months=await loadAllMonthDocs();
-    globalCache={months:months,series:buildPatrimonioSeries(months)};
+    globalCache={months:months,series:buildPatrimonioSeries(months),seriesDaily:buildPatrimonioSeriesDaily(months)};
     if(status) status.style.display='none';
     if(content) content.style.display='block';
     // Refresh categoría chart now that we have the latest months in cache
     renderCategoriasChart();
   }
   var series=globalCache.series;
+  var seriesDaily=globalCache.seriesDaily||series;
   if(!series.length){
     document.getElementById('global-summary').innerHTML='<div class="empty" style="grid-column:1/-1">Sin datos históricos. Guarda al menos un mes para ver el resumen global.</div>';
     return;
   }
   var ranges=[{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
   document.getElementById('global-ranges').innerHTML=ranges.map(function(r){return '<div class="chip '+(r.k===globalRange?'active':'')+'" onclick="setGlobalRange(\''+r.k+'\')">'+r.l+'</div>';}).join('');
+  var filteredDaily=filterSeriesByRange(seriesDaily, globalRange);
   var filtered=filterSeriesByRange(series, globalRange);
-  var first=filtered[0]||series[0], last=filtered[filtered.length-1]||series[series.length-1];
+  var first=filteredDaily[0]||seriesDaily[0]||series[0], last=filteredDaily[filteredDaily.length-1]||seriesDaily[seriesDaily.length-1]||series[series.length-1];
   var current=last.patrimonio;
   var change=current-first.patrimonio;
   var changePct=first.patrimonio!==0?Math.round(change/Math.abs(first.patrimonio)*10000)/100:0;
   var rangeLbl=ranges.find(function(r){return r.k===globalRange;});
-  document.getElementById('global-range-label').textContent=(rangeLbl?rangeLbl.l:'')+' · '+filtered.length+(filtered.length===1?' punto':' puntos');
+  document.getElementById('global-range-label').textContent=(rangeLbl?rangeLbl.l:'')+' · '+filteredDaily.length+(filteredDaily.length===1?' punto':' puntos');
   document.getElementById('global-summary').innerHTML=
     mc('Patrimonio actual',fmt(current),current<0?'red':'green',last.date)+
     mc('Cambio absoluto',(change>=0?'+':'')+fmt(change),change>=0?'green':'red','vs inicio del rango')+
     mc('Cambio %',(changePct>=0?'+':'')+changePct+'%',changePct>=0?'green':'red','desde '+first.date)+
     mc('Inversiones',fmt(last.inversion),'blue','en último snapshot');
-  // KPIs
-  var maxV=Math.max.apply(null,filtered.map(function(s){return s.patrimonio;}));
-  var minV=Math.min.apply(null,filtered.map(function(s){return s.patrimonio;}));
+  // KPIs (sobre la serie diaria filtrada)
+  var maxV=Math.max.apply(null,filteredDaily.map(function(s){return s.patrimonio;}));
+  var minV=Math.min.apply(null,filteredDaily.map(function(s){return s.patrimonio;}));
+  // Mejor mes calculado sobre snapshots mensuales filtrados
   var bestM=null, worstM=null;
   for(var i=1;i<filtered.length;i++){
     var diff=filtered[i].patrimonio-filtered[i-1].patrimonio;
     if(bestM===null||diff>bestM.diff) bestM={diff:diff,date:filtered[i].date};
     if(worstM===null||diff<worstM.diff) worstM={diff:diff,date:filtered[i].date};
   }
-  // Drawdown máximo
-  var peak=filtered[0].patrimonio, ddMax=0;
-  filtered.forEach(function(s){ if(s.patrimonio>peak) peak=s.patrimonio; var dd=peak>0?(s.patrimonio-peak)/peak*100:0; if(dd<ddMax) ddMax=dd; });
+  // Drawdown máximo sobre la diaria
+  var peak=filteredDaily[0].patrimonio, ddMax=0;
+  filteredDaily.forEach(function(s){ if(s.patrimonio>peak) peak=s.patrimonio; var dd=peak>0?(s.patrimonio-peak)/peak*100:0; if(dd<ddMax) ddMax=dd; });
   document.getElementById('global-kpis').innerHTML=
     mc('Máximo',fmt(maxV),'green')+
     mc('Mínimo',fmt(minV),'red')+
     mc('Mejor mes',bestM?(bestM.diff>=0?'+':'')+fmt(bestM.diff):'—',bestM&&bestM.diff>=0?'green':'red',bestM?bestM.date:'')+
     mc('Drawdown máx',Math.round(ddMax*100)/100+'%',ddMax<-10?'red':'amber','desde pico');
-  // Chart
+  // Chart de evolución (resolución diaria)
   if(globalChart) globalChart.destroy();
   var ctx=document.getElementById('global-chart');
   if(ctx){
-    var labels=filtered.map(function(s){var p=s.date.split('-');return p[2]+'/'+p[1]+'/'+p[0].slice(2);});
+    var labels=filteredDaily.map(function(s){var p=s.date.split('-');return p[2]+'/'+p[1]+'/'+p[0].slice(2);});
+    var ptR=filteredDaily.length<31?2.5:(filteredDaily.length<92?1.5:0);
     globalChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
-      {label:'Patrimonio',data:filtered.map(function(s){return s.patrimonio;}),borderColor:change>=0?'#1fd196':'#f05c5c',backgroundColor:(change>=0?'rgba(31,209,150,0.1)':'rgba(240,92,92,0.1)'),fill:true,tension:0.3,pointRadius:filtered.length<24?3:1,pointBackgroundColor:change>=0?'#1fd196':'#f05c5c',borderWidth:2}
-    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:45},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+      {label:'Patrimonio',data:filteredDaily.map(function(s){return s.patrimonio;}),borderColor:change>=0?'#1fd196':'#f05c5c',backgroundColor:(change>=0?'rgba(31,209,150,0.1)':'rgba(240,92,92,0.1)'),fill:true,tension:0.25,pointRadius:ptR,pointBackgroundColor:change>=0?'#1fd196':'#f05c5c',borderWidth:2}
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:14},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
   }
   // Composition chart: stacked bars per month (liquid, inversion, -deuda)
   if(globalCompChart) globalCompChart.destroy();
