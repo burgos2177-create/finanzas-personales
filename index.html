@@ -331,6 +331,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="mg" id="global-kpis"></div>
           <div class="card"><div class="card-header"><div class="card-title">Composición por categoría</div></div><div class="ch-wrap" style="height:240px"><canvas id="global-comp-chart"></canvas></div></div>
         </div>
+        <div class="card" id="empresas-card">
+          <div class="card-header"><div class="card-title">🏢 Empresas</div><div id="empresas-count" class="card-badge"></div></div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Saldos de empresas. Pueden actualizarse en tiempo real desde otra app conectada al mismo Firestore.</div>
+          <div id="empresas-list"></div>
+          <div class="fdiv"></div><div class="flbl">Agregar empresa</div>
+          <div class="fg fg4">
+            <div class="field"><label>Nombre</label><input id="emp-nombre" type="text" placeholder="Ej. Negocio Pavo"></div>
+            <div class="field"><label>Saldo</label><input id="emp-saldo" type="number" step="0.01" placeholder="0"></div>
+            <div class="field"><label>Moneda</label><select id="emp-moneda"><option value="MXN">MXN</option><option value="USD">USD</option></select></div>
+            <div class="field"><label>Color</label><input id="emp-color" type="color" value="#9b8ef7"></div>
+          </div>
+          <button class="btn btn-green" onclick="addEmpresa()" style="margin-top:6px">+ Agregar empresa</button>
+          <details style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+            <summary style="cursor:pointer;color:var(--text2);font-size:12px;font-weight:500">⚙ Integración con otra app — pásale este prompt al otro chat</summary>
+            <div id="empresas-integ-info" style="margin-top:10px"></div>
+          </details>
+        </div>
       </div>
 
       <!-- INVERSIÓN -->
@@ -627,7 +644,7 @@ var DEFAULT_MES_STATE={
 //  STATE
 // ════════════════════════════════════════════════
 var currentMes='Enero', currentAnio='2026';
-var state={}, subs=[], cats=[], medios=[], compras=[], globalConfig={usdRate:17.5};
+var state={}, subs=[], cats=[], medios=[], compras=[], empresas=[], globalConfig={usdRate:17.5};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null;
@@ -665,7 +682,8 @@ function save(skipDelay){
     var p4 = window._setDoc(globalDocRef('medios'), {list: medios});
     var p5 = window._setDoc(globalDocRef('compras'), {list: compras});
     var p6 = window._setDoc(globalDocRef('config'), globalConfig);
-    Promise.all([p1,p2,p3,p4,p5,p6])
+    var p7 = window._setDoc(globalDocRef('empresas'), {list: empresas});
+    Promise.all([p1,p2,p3,p4,p5,p6,p7])
       .then(function(){ syncStatus('ok'); })
       .catch(function(e){ console.error(e); syncStatus('error'); toast('Error al guardar',true); });
   }, delay);
@@ -1996,6 +2014,7 @@ function filterSeriesByRange(series, range){
   return series.filter(function(s){return s.date>=cstr;});
 }
 async function renderGlobal(){
+  renderEmpresasSection();
   var status=document.getElementById('global-status');
   var content=document.getElementById('global-content');
   if(!globalCache){
@@ -2065,6 +2084,109 @@ async function renderGlobal(){
 }
 window.setGlobalRange=function(r){ globalRange=r; renderGlobal(); };
 window.refreshGlobal=function(){ globalCache=null; renderGlobal(); };
+
+// ── Empresas: listener en tiempo real + CRUD ──
+var empresasListenerAttached=false;
+function setupEmpresasListener(){
+  if(empresasListenerAttached) return;
+  if(!uid()) return;
+  try {
+    window._onSnapshot(globalDocRef('empresas'), function(snap){
+      if(!snap.exists()) return;
+      var newList=snap.data().list||[];
+      if(JSON.stringify(empresas)===JSON.stringify(newList)) return;
+      empresas=newList;
+      var sec=document.getElementById('s-global');
+      if(sec && sec.classList.contains('active')) renderEmpresasSection();
+    });
+    empresasListenerAttached=true;
+  } catch(e){ console.error('No se pudo conectar listener de empresas:',e); }
+}
+function renderEmpresasSection(){
+  var listEl=document.getElementById('empresas-list'); if(!listEl) return;
+  document.getElementById('empresas-count').textContent=empresas.length+' '+(empresas.length===1?'empresa':'empresas');
+  if(!empresas.length){
+    listEl.innerHTML='<div class="empty">Sin empresas aún. Agrega una abajo o conecta otra app.</div>';
+  } else {
+    listEl.innerHTML=empresas.map(function(e){
+      var saldoMxn=e.saldo||0;
+      if(e.moneda==='USD') saldoMxn=saldoMxn*getUsdRate();
+      var lu=e.lastUpdate?new Date(e.lastUpdate):null;
+      var luTxt=lu?lu.toLocaleString('es-MX',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+      var srcBadge=e.source==='external'?'<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;background:rgba(91,156,246,0.15);color:var(--blue);letter-spacing:0.04em;margin-left:6px">EXTERNO</span>':'';
+      return '<div class="mp-card" style="flex-direction:column;align-items:stretch;gap:8px">'+
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div class="mp-icon" style="background:'+(e.color||'#9b8ef7')+'22;color:'+(e.color||'#9b8ef7')+'">🏢</div>'+
+          '<div style="flex:1;min-width:0">'+
+            '<input class="editable" value="'+esc(e.nombre||'')+'" style="font-size:14px;font-weight:500;color:'+(e.color||'#9b8ef7')+';max-width:240px" onblur="updEmpresa(\''+esc(e.id)+'\',\'nombre\',this.value)">'+srcBadge+
+            '<div style="font-size:11px;color:var(--text3);margin-top:2px">Última actualización: '+luTxt+(e.notas?' · '+esc(e.notas):'')+'</div>'+
+          '</div>'+
+          '<div style="display:flex;align-items:center;gap:6px">'+
+            '<input type="number" value="'+(e.saldo||0)+'" step="0.01" onchange="updEmpresa(\''+esc(e.id)+'\',\'saldo\',this.value)" style="width:120px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:14px;padding:5px 8px;outline:none;text-align:right">'+
+            '<select onchange="updEmpresa(\''+esc(e.id)+'\',\'moneda\',this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:11px;font-family:var(--mono);padding:4px 6px;border-radius:5px;outline:none"><option value="MXN"'+(e.moneda==='MXN'?' selected':'')+'>MXN</option><option value="USD"'+(e.moneda==='USD'?' selected':'')+'>USD</option></select>'+
+          '</div>'+
+          (e.moneda==='USD'?'<div style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:100px;text-align:right">≈ '+fmt(saldoMxn)+' MXN</div>':'')+
+          '<input type="color" value="'+(e.color||'#9b8ef7')+'" onchange="updEmpresa(\''+esc(e.id)+'\',\'color\',this.value)" style="width:24px;height:24px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0">'+
+          '<button class="btn-del" onclick="delEmpresa(\''+esc(e.id)+'\')">✕</button>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+  }
+  // Total
+  if(empresas.length){
+    var totMxn=empresas.reduce(function(a,e){var s=e.saldo||0; if(e.moneda==='USD') s*=getUsdRate(); return a+s;},0);
+    listEl.innerHTML+='<div class="row" style="font-weight:500;border-bottom:none;margin-top:6px"><div class="row-main" style="color:var(--text2);font-size:12px">TOTAL EN MXN</div><div style="color:var(--purple);font-family:var(--mono);font-size:15px;font-weight:600">'+fmt(totMxn)+'</div></div>';
+  }
+  // Integración info
+  var infoEl=document.getElementById('empresas-integ-info');
+  if(infoEl){
+    var u=uid()||'<USER_UID>';
+    var ejemplo=JSON.stringify({list:[{id:'emp_1',nombre:'Negocio Pavo',saldo:12345.67,moneda:'MXN',source:'external',lastUpdate:new Date().toISOString(),notas:'opcional'}]},null,2);
+    infoEl.innerHTML='<div style="font-size:12px;color:var(--text2);line-height:1.55">'+
+      '<p style="margin-bottom:8px">Esta app escucha cambios en Firestore en tiempo real. Para que otra app (u otro chat de Claude con acceso a Firebase) pueda enviarte saldos en vivo, debe escribir al documento:</p>'+
+      '<code style="display:block;background:var(--bg);padding:8px 10px;border-radius:6px;font-size:11px;color:var(--green);user-select:all;margin-bottom:10px">usuarios/'+esc(u)+'/global/empresas</code>'+
+      '<p style="margin-bottom:6px"><b>Estructura:</b></p>'+
+      '<pre style="background:var(--bg);padding:10px;border-radius:6px;font-size:11px;color:var(--text);overflow-x:auto;margin-bottom:10px">'+esc(ejemplo)+'</pre>'+
+      '<p style="margin-bottom:6px"><b>Prompt sugerido para el otro chat:</b></p>'+
+      '<div style="background:var(--bg);padding:10px;border-radius:6px;font-size:11px;color:var(--text);user-select:all">Cada vez que cambien los saldos de mis empresas, escribe el documento Firestore en la ruta <code>usuarios/'+esc(u)+'/global/empresas</code> del proyecto <code>fnz-psnal</code> con la forma <code>{ list: [{ id, nombre, saldo, moneda, source: \'external\', lastUpdate: ISO_DATE_STRING }] }</code>. Necesitas autenticarte como el mismo usuario Google. La app de finanzas se actualizará en vivo.</div>'+
+      '</div>';
+  }
+}
+window.addEmpresa=function(){
+  var n=document.getElementById('emp-nombre').value.trim();
+  var s=parseFloat(document.getElementById('emp-saldo').value)||0;
+  var m=document.getElementById('emp-moneda').value;
+  var c=document.getElementById('emp-color').value;
+  if(!n){ toast('Falta nombre',true); return; }
+  if(empresas.find(function(e){return e.nombre.toLowerCase()===n.toLowerCase();})){ toast('Empresa ya existe',true); return; }
+  empresas.push({id:'emp_'+Date.now().toString(36),nombre:n,saldo:s,moneda:m,color:c,source:'manual',lastUpdate:new Date().toISOString(),historia:[{fecha:new Date().toISOString().slice(0,10),saldo:s}]});
+  document.getElementById('emp-nombre').value=''; document.getElementById('emp-saldo').value='';
+  save(); renderEmpresasSection();
+  toast('Empresa agregada');
+};
+window.updEmpresa=function(id,f,v){
+  var e=empresas.find(function(x){return x.id===id;}); if(!e) return;
+  if(f==='saldo') v=parseFloat(v)||0;
+  if(f==='nombre'){ var nv=(v||'').trim(); if(!nv){ renderEmpresasSection(); return; } if(empresas.find(function(o){return o.id!==e.id && o.nombre.toLowerCase()===nv.toLowerCase();})){ toast('Nombre ya existe',true); renderEmpresasSection(); return; } v=nv; }
+  e[f]=v;
+  e.source='manual';
+  e.lastUpdate=new Date().toISOString();
+  if(f==='saldo'){
+    if(!e.historia) e.historia=[];
+    var hoy=new Date().toISOString().slice(0,10);
+    var last=e.historia[e.historia.length-1];
+    if(last && last.fecha===hoy) last.saldo=v;
+    else e.historia.push({fecha:hoy,saldo:v});
+  }
+  save(); renderEmpresasSection();
+};
+window.delEmpresa=function(id){
+  var e=empresas.find(function(x){return x.id===id;}); if(!e) return;
+  if(!confirm('¿Eliminar empresa "'+(e.nombre||'')+'"?')) return;
+  empresas=empresas.filter(function(x){return x.id!==id;});
+  save(); renderEmpresasSection();
+  toast('Empresa eliminada');
+};
 
 
 function buildDestinoSelect(medioId,p){
@@ -2649,7 +2771,9 @@ window._appBoot = async function(){
     cats   = await loadGlobalFromFirestore('cats', DEFAULT_CATS);
     subs   = await loadGlobalFromFirestore('subs', []);
     compras = await loadGlobalFromFirestore('compras', []);
+    empresas = await loadGlobalFromFirestore('empresas', []);
     try { var cfgSnap=await window._getDoc(globalDocRef('config')); if(cfgSnap.exists()) globalConfig=Object.assign({usdRate:17.5},cfgSnap.data()); } catch(e){}
+    setupEmpresasListener();
     state  = await loadMesFromFirestore();
     if(!state.gastos) state.gastos=[];
     if(!state.nextId) state.nextId=200;
@@ -2666,7 +2790,7 @@ window._appBoot = async function(){
     toast('Error cargando datos. Revisa tu conexión.',true);
     medios=JSON.parse(JSON.stringify(DEFAULT_MEDIOS));
     cats=JSON.parse(JSON.stringify(DEFAULT_CATS));
-    subs=[]; compras=[];
+    subs=[]; compras=[]; empresas=[];
     state=JSON.parse(JSON.stringify(DEFAULT_MES_STATE));
   }
   populateMediosSels(); populateCatSel();
