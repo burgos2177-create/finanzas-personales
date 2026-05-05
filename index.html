@@ -348,6 +348,32 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <div id="empresas-integ-info" style="margin-top:10px"></div>
           </details>
         </div>
+        <div class="card" id="fisicos-card">
+          <div class="card-header"><div class="card-title">🏠 Activos físicos</div><div id="fisicos-count" class="card-badge"></div></div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Autos, casas, terrenos y otros bienes con valor estimable. Edita el valor cuando cambie.</div>
+          <div id="fisicos-list"></div>
+          <div class="fdiv"></div><div class="flbl">Agregar activo</div>
+          <div class="fg fg5">
+            <div class="field"><label>Nombre</label><input id="fis-nombre" type="text" placeholder="Ej. Honda Civic 2020"></div>
+            <div class="field"><label>Categoría</label>
+              <select id="fis-categoria">
+                <option value="Auto">🚗 Auto</option>
+                <option value="Casa">🏠 Casa</option>
+                <option value="Terreno">🏞️ Terreno</option>
+                <option value="Otro">📦 Otro</option>
+              </select>
+            </div>
+            <div class="field"><label>Valor actual</label><input id="fis-valor" type="number" step="0.01"></div>
+            <div class="field"><label>Moneda</label><select id="fis-moneda"><option value="MXN">MXN</option><option value="USD">USD</option></select></div>
+            <div class="field"><label>Color</label><input id="fis-color" type="color" value="#a8d76b"></div>
+          </div>
+          <button class="btn btn-green" onclick="addFisico()" style="margin-top:6px">+ Agregar activo</button>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Patrimonio por categoría</div><div id="cat-total-badge" class="card-badge"></div></div>
+          <div class="ch-wrap" style="height:280px"><canvas id="cat-chart"></canvas></div>
+          <div id="cat-legend" style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px"></div>
+        </div>
       </div>
 
       <!-- INVERSIÓN -->
@@ -644,10 +670,11 @@ var DEFAULT_MES_STATE={
 //  STATE
 // ════════════════════════════════════════════════
 var currentMes='Enero', currentAnio='2026';
-var state={}, subs=[], cats=[], medios=[], compras=[], empresas=[], globalConfig={usdRate:17.5};
+var state={}, subs=[], cats=[], medios=[], compras=[], empresas=[], fisicos=[], globalConfig={usdRate:17.5};
+var FISICO_CATS={Auto:'🚗',Casa:'🏠',Terreno:'🏞️',Otro:'📦'};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
-var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null;
+var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null;
 var selectedWeekIdx=null, globalRange='all', globalCache=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
@@ -683,7 +710,8 @@ function save(skipDelay){
     var p5 = window._setDoc(globalDocRef('compras'), {list: compras});
     var p6 = window._setDoc(globalDocRef('config'), globalConfig);
     var p7 = window._setDoc(globalDocRef('empresas'), {list: empresas});
-    Promise.all([p1,p2,p3,p4,p5,p6,p7])
+    var p8 = window._setDoc(globalDocRef('fisicos'), {list: fisicos});
+    Promise.all([p1,p2,p3,p4,p5,p6,p7,p8])
       .then(function(){ syncStatus('ok'); })
       .catch(function(e){ console.error(e); syncStatus('error'); toast('Error al guardar',true); });
   }, delay);
@@ -2015,6 +2043,8 @@ function filterSeriesByRange(series, range){
 }
 async function renderGlobal(){
   renderEmpresasSection();
+  renderFisicosSection();
+  renderCategoriasChart();
   var status=document.getElementById('global-status');
   var content=document.getElementById('global-content');
   if(!globalCache){
@@ -2097,7 +2127,7 @@ function setupEmpresasListener(){
       if(JSON.stringify(empresas)===JSON.stringify(newList)) return;
       empresas=newList;
       var sec=document.getElementById('s-global');
-      if(sec && sec.classList.contains('active')) renderEmpresasSection();
+      if(sec && sec.classList.contains('active')){ renderEmpresasSection(); renderCategoriasChart(); }
     });
     empresasListenerAttached=true;
   } catch(e){ console.error('No se pudo conectar listener de empresas:',e); }
@@ -2187,6 +2217,139 @@ window.delEmpresa=function(id){
   save(); renderEmpresasSection();
   toast('Empresa eliminada');
 };
+
+// ── Activos físicos: listener + CRUD ──
+var fisicosListenerAttached=false;
+function setupFisicosListener(){
+  if(fisicosListenerAttached) return;
+  if(!uid()) return;
+  try {
+    window._onSnapshot(globalDocRef('fisicos'), function(snap){
+      if(!snap.exists()) return;
+      var newList=snap.data().list||[];
+      if(JSON.stringify(fisicos)===JSON.stringify(newList)) return;
+      fisicos=newList;
+      var sec=document.getElementById('s-global');
+      if(sec && sec.classList.contains('active')){ renderFisicosSection(); renderCategoriasChart(); }
+    });
+    fisicosListenerAttached=true;
+  } catch(e){ console.error('No se pudo conectar listener de fisicos:',e); }
+}
+function totalFisicosMxn(){
+  return fisicos.reduce(function(a,f){var v=f.valor||0; if(f.moneda==='USD') v*=getUsdRate(); return a+v;},0);
+}
+function totalEmpresasMxn(){
+  return empresas.reduce(function(a,e){var s=e.saldo||0; if(e.moneda==='USD') s*=getUsdRate(); return a+s;},0);
+}
+function renderFisicosSection(){
+  var listEl=document.getElementById('fisicos-list'); if(!listEl) return;
+  document.getElementById('fisicos-count').textContent=fisicos.length+' '+(fisicos.length===1?'activo':'activos');
+  if(!fisicos.length){
+    listEl.innerHTML='<div class="empty">Sin activos físicos. Agrega uno abajo.</div>';
+  } else {
+    listEl.innerHTML=fisicos.map(function(f){
+      var valMxn=f.valor||0; if(f.moneda==='USD') valMxn=valMxn*getUsdRate();
+      var ic=FISICO_CATS[f.categoria]||'📦';
+      var cats=Object.keys(FISICO_CATS).map(function(k){return '<option value="'+k+'"'+(f.categoria===k?' selected':'')+'>'+FISICO_CATS[k]+' '+k+'</option>';}).join('');
+      var lu=f.lastUpdate?new Date(f.lastUpdate):null;
+      var luTxt=lu?lu.toLocaleString('es-MX',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+      return '<div class="mp-card" style="flex-direction:column;align-items:stretch;gap:8px">'+
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div class="mp-icon" style="background:'+(f.color||'#a8d76b')+'22;color:'+(f.color||'#a8d76b')+'">'+ic+'</div>'+
+          '<div style="flex:1;min-width:0">'+
+            '<input class="editable" value="'+esc(f.nombre||'')+'" style="font-size:14px;font-weight:500;color:'+(f.color||'#a8d76b')+';max-width:240px" onblur="updFisico(\''+esc(f.id)+'\',\'nombre\',this.value)">'+
+            '<div style="font-size:11px;color:var(--text3);margin-top:2px">Actualizado: '+luTxt+'</div>'+
+          '</div>'+
+          '<select onchange="updFisico(\''+esc(f.id)+'\',\'categoria\',this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:11px;padding:4px 8px;border-radius:5px;outline:none">'+cats+'</select>'+
+          '<div style="display:flex;align-items:center;gap:6px">'+
+            '<input type="number" value="'+(f.valor||0)+'" step="0.01" onchange="updFisico(\''+esc(f.id)+'\',\'valor\',this.value)" style="width:130px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:14px;padding:5px 8px;outline:none;text-align:right">'+
+            '<select onchange="updFisico(\''+esc(f.id)+'\',\'moneda\',this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:11px;font-family:var(--mono);padding:4px 6px;border-radius:5px;outline:none"><option value="MXN"'+(f.moneda==='MXN'?' selected':'')+'>MXN</option><option value="USD"'+(f.moneda==='USD'?' selected':'')+'>USD</option></select>'+
+          '</div>'+
+          (f.moneda==='USD'?'<div style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:110px;text-align:right">≈ '+fmt(valMxn)+' MXN</div>':'')+
+          '<input type="color" value="'+(f.color||'#a8d76b')+'" onchange="updFisico(\''+esc(f.id)+'\',\'color\',this.value)" style="width:24px;height:24px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0">'+
+          '<button class="btn-del" onclick="delFisico(\''+esc(f.id)+'\')">✕</button>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+    var totMxn=totalFisicosMxn();
+    listEl.innerHTML+='<div class="row" style="font-weight:500;border-bottom:none;margin-top:6px"><div class="row-main" style="color:var(--text2);font-size:12px">TOTAL EN MXN</div><div style="color:var(--green);font-family:var(--mono);font-size:15px;font-weight:600">'+fmt(totMxn)+'</div></div>';
+  }
+}
+window.addFisico=function(){
+  var n=document.getElementById('fis-nombre').value.trim();
+  var cat=document.getElementById('fis-categoria').value;
+  var v=parseFloat(document.getElementById('fis-valor').value)||0;
+  var mon=document.getElementById('fis-moneda').value;
+  var col=document.getElementById('fis-color').value;
+  if(!n){ toast('Falta nombre',true); return; }
+  fisicos.push({id:'fis_'+Date.now().toString(36),nombre:n,categoria:cat,valor:v,moneda:mon,color:col,lastUpdate:new Date().toISOString(),historia:[{fecha:new Date().toISOString().slice(0,10),valor:v}]});
+  document.getElementById('fis-nombre').value=''; document.getElementById('fis-valor').value='';
+  save(); renderFisicosSection(); renderCategoriasChart();
+  toast('Activo agregado');
+};
+window.updFisico=function(id,f,v){
+  var x=fisicos.find(function(o){return o.id===id;}); if(!x) return;
+  if(f==='valor') v=parseFloat(v)||0;
+  if(f==='nombre'){ var nv=(v||'').trim(); if(!nv){ renderFisicosSection(); return; } v=nv; }
+  x[f]=v;
+  x.lastUpdate=new Date().toISOString();
+  if(f==='valor'){
+    if(!x.historia) x.historia=[];
+    var hoy=new Date().toISOString().slice(0,10);
+    var last=x.historia[x.historia.length-1];
+    if(last && last.fecha===hoy) last.valor=v;
+    else x.historia.push({fecha:hoy,valor:v});
+  }
+  save(); renderFisicosSection(); renderCategoriasChart();
+};
+window.delFisico=function(id){
+  var x=fisicos.find(function(o){return o.id===id;}); if(!x) return;
+  if(!confirm('¿Eliminar activo "'+(x.nombre||'')+'"?')) return;
+  fisicos=fisicos.filter(function(o){return o.id!==id;});
+  save(); renderFisicosSection(); renderCategoriasChart();
+  toast('Activo eliminado');
+};
+
+// ── Patrimonio por categoría: chart con las 5 categorías ──
+function computeCategoriaTotals(){
+  var liquido=0, deuda=0, inv=0;
+  var saldosIni=state.saldosIniciales||{};
+  var mov={};
+  (state.gastos||[]).forEach(function(g){ if(!g.mp) return; if(!mov[g.mp]) mov[g.mp]={ing:0,egr:0}; if(gTipo(g)==='ingreso') mov[g.mp].ing+=g.monto; else mov[g.mp].egr+=g.monto; });
+  medios.forEach(function(m){
+    if(m.tipo==='Inversión'){ (m.posiciones||[]).forEach(function(p){ inv+=valorPos(p); }); return; }
+    var ini=saldosIni[m.nombre]||0;
+    var mv=mov[m.nombre]||{ing:0,egr:0};
+    if(m.tipo==='Crédito') deuda+=Math.max(ini+mv.egr-mv.ing,0);
+    else liquido+=ini+mv.ing-mv.egr;
+  });
+  var emp=totalEmpresasMxn();
+  var fis=totalFisicosMxn();
+  return {liquido:liquido,inv:inv,deuda:deuda,empresas:emp,fisicos:fis};
+}
+function renderCategoriasChart(){
+  var ctx=document.getElementById('cat-chart'); if(!ctx) return;
+  var t=computeCategoriaTotals();
+  var totActivos=t.liquido+t.inv+t.empresas+t.fisicos;
+  var patrimonio=totActivos-t.deuda;
+  document.getElementById('cat-total-badge').textContent='Patrimonio: '+fmt(patrimonio);
+  var data=[
+    {lbl:'Líquidos',val:t.liquido,col:'#1fd196'},
+    {lbl:'Inversiones',val:t.inv,col:'#5b9cf6'},
+    {lbl:'Empresas',val:t.empresas,col:'#9b8ef7'},
+    {lbl:'Físicos',val:t.fisicos,col:'#a8d76b'},
+    {lbl:'Deuda',val:-t.deuda,col:'#f05c5c'}
+  ];
+  if(catChart) catChart.destroy();
+  catChart=new Chart(ctx,{type:'bar',data:{
+    labels:data.map(function(d){return d.lbl;}),
+    datasets:[{data:data.map(function(d){return d.val;}),backgroundColor:data.map(function(d){return d.col+'b3';}),borderColor:data.map(function(d){return d.col;}),borderWidth:1,borderRadius:6}]
+  },options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmt(c.raw);}}}},scales:{x:{ticks:{callback:function(v){return fmt(v);},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},y:{ticks:{color:'#8b90a0',font:{size:12}},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+  document.getElementById('cat-legend').innerHTML=data.map(function(d){
+    var pct=totActivos>0?Math.round(Math.abs(d.val)/totActivos*1000)/10:0;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px"><span style="width:10px;height:10px;border-radius:2px;background:'+d.col+';flex-shrink:0"></span><div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">'+d.lbl+'</div><div style="font-size:14px;font-family:var(--mono);font-weight:600;color:'+d.col+'">'+fmt(d.val)+'</div></div>'+(d.lbl!=='Deuda'?'<div style="font-size:10px;color:var(--text3);font-family:var(--mono)">'+pct+'%</div>':'')+'</div>';
+  }).join('');
+}
 
 
 function buildDestinoSelect(medioId,p){
@@ -2772,8 +2935,9 @@ window._appBoot = async function(){
     subs   = await loadGlobalFromFirestore('subs', []);
     compras = await loadGlobalFromFirestore('compras', []);
     empresas = await loadGlobalFromFirestore('empresas', []);
+    fisicos = await loadGlobalFromFirestore('fisicos', []);
     try { var cfgSnap=await window._getDoc(globalDocRef('config')); if(cfgSnap.exists()) globalConfig=Object.assign({usdRate:17.5},cfgSnap.data()); } catch(e){}
-    setupEmpresasListener();
+    setupEmpresasListener(); setupFisicosListener();
     state  = await loadMesFromFirestore();
     if(!state.gastos) state.gastos=[];
     if(!state.nextId) state.nextId=200;
@@ -2790,7 +2954,7 @@ window._appBoot = async function(){
     toast('Error cargando datos. Revisa tu conexión.',true);
     medios=JSON.parse(JSON.stringify(DEFAULT_MEDIOS));
     cats=JSON.parse(JSON.stringify(DEFAULT_CATS));
-    subs=[]; compras=[]; empresas=[];
+    subs=[]; compras=[]; empresas=[]; fisicos=[];
     state=JSON.parse(JSON.stringify(DEFAULT_MES_STATE));
   }
   populateMediosSels(); populateCatSel();
