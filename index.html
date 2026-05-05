@@ -353,7 +353,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Autos, casas, terrenos y otros bienes con valor estimable. Edita el valor cuando cambie.</div>
           <div id="fisicos-list"></div>
           <div class="fdiv"></div><div class="flbl">Agregar activo</div>
-          <div class="fg fg5">
+          <div class="fg" style="grid-template-columns:1.5fr 1fr 1fr 1fr .8fr .8fr">
             <div class="field"><label>Nombre</label><input id="fis-nombre" type="text" placeholder="Ej. Honda Civic 2020"></div>
             <div class="field"><label>Categoría</label>
               <select id="fis-categoria">
@@ -363,7 +363,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
                 <option value="Otro">📦 Otro</option>
               </select>
             </div>
-            <div class="field"><label>Valor actual</label><input id="fis-valor" type="number" step="0.01"></div>
+            <div class="field"><label>Valor base</label><input id="fis-valor" type="number" step="0.01"></div>
+            <div class="field"><label title="Plusvalía positiva (ej. 5 = +5%/año), minusvalía negativa (ej. -15 para autos)">Tasa anual %</label><input id="fis-tasa" type="number" step="0.01" placeholder="0"></div>
             <div class="field"><label>Moneda</label><select id="fis-moneda"><option value="MXN">MXN</option><option value="USD">USD</option></select></div>
             <div class="field"><label>Color</label><input id="fis-color" type="color" value="#a8d76b"></div>
           </div>
@@ -2054,6 +2055,8 @@ async function renderGlobal(){
     globalCache={months:months,series:buildPatrimonioSeries(months)};
     if(status) status.style.display='none';
     if(content) content.style.display='block';
+    // Refresh categoría chart now that we have the latest months in cache
+    renderCategoriasChart();
   }
   var series=globalCache.series;
   if(!series.length){
@@ -2235,8 +2238,17 @@ function setupFisicosListener(){
     fisicosListenerAttached=true;
   } catch(e){ console.error('No se pudo conectar listener de fisicos:',e); }
 }
+function valorPhysical(f){
+  var base=f.valor||0;
+  var tasa=(f.tasaAnual||0)/100;
+  if(!tasa) return base;
+  var fechaBase=f.fechaBase||f.lastUpdate||new Date().toISOString();
+  var elapsed=(Date.now()-new Date(fechaBase).getTime())/(1000*60*60*24);
+  if(elapsed<0) elapsed=0;
+  return base*(1+tasa*elapsed/365);
+}
 function totalFisicosMxn(){
-  return fisicos.reduce(function(a,f){var v=f.valor||0; if(f.moneda==='USD') v*=getUsdRate(); return a+v;},0);
+  return fisicos.reduce(function(a,f){var v=valorPhysical(f); if(f.moneda==='USD') v*=getUsdRate(); return a+v;},0);
 }
 function totalEmpresasMxn(){
   return empresas.reduce(function(a,e){var s=e.saldo||0; if(e.moneda==='USD') s*=getUsdRate(); return a+s;},0);
@@ -2248,57 +2260,72 @@ function renderFisicosSection(){
     listEl.innerHTML='<div class="empty">Sin activos físicos. Agrega uno abajo.</div>';
   } else {
     listEl.innerHTML=fisicos.map(function(f){
-      var valMxn=f.valor||0; if(f.moneda==='USD') valMxn=valMxn*getUsdRate();
+      var base=f.valor||0;
+      var actual=valorPhysical(f);
+      var delta=actual-base;
+      var actualMxn=actual; if(f.moneda==='USD') actualMxn=actual*getUsdRate();
       var ic=FISICO_CATS[f.categoria]||'📦';
       var cats=Object.keys(FISICO_CATS).map(function(k){return '<option value="'+k+'"'+(f.categoria===k?' selected':'')+'>'+FISICO_CATS[k]+' '+k+'</option>';}).join('');
-      var lu=f.lastUpdate?new Date(f.lastUpdate):null;
-      var luTxt=lu?lu.toLocaleString('es-MX',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+      var fb=f.fechaBase?new Date(f.fechaBase):(f.lastUpdate?new Date(f.lastUpdate):null);
+      var fbTxt=fb?fb.toLocaleDateString('es-MX',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
+      var tasa=f.tasaAnual||0;
+      var tendCol=tasa>0?'var(--green)':(tasa<0?'var(--red)':'var(--text3)');
+      var tendLbl=tasa===0?'sin cambio':(tasa>0?'plusvalía':'minusvalía');
+      var deltaTxt=tasa!==0?'<div style="font-size:10px;color:'+tendCol+';margin-top:2px">'+(delta>=0?'+':'')+fmt(delta)+' ('+tendLbl+' '+(tasa>0?'+':'')+tasa+'%/año desde '+fbTxt+')</div>':'<div style="font-size:10px;color:var(--text3);margin-top:2px">valor base · '+fbTxt+'</div>';
       return '<div class="mp-card" style="flex-direction:column;align-items:stretch;gap:8px">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
           '<div class="mp-icon" style="background:'+(f.color||'#a8d76b')+'22;color:'+(f.color||'#a8d76b')+'">'+ic+'</div>'+
           '<div style="flex:1;min-width:0">'+
             '<input class="editable" value="'+esc(f.nombre||'')+'" style="font-size:14px;font-weight:500;color:'+(f.color||'#a8d76b')+';max-width:240px" onblur="updFisico(\''+esc(f.id)+'\',\'nombre\',this.value)">'+
-            '<div style="font-size:11px;color:var(--text3);margin-top:2px">Actualizado: '+luTxt+'</div>'+
+            deltaTxt+
           '</div>'+
           '<select onchange="updFisico(\''+esc(f.id)+'\',\'categoria\',this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:11px;padding:4px 8px;border-radius:5px;outline:none">'+cats+'</select>'+
-          '<div style="display:flex;align-items:center;gap:6px">'+
-            '<input type="number" value="'+(f.valor||0)+'" step="0.01" onchange="updFisico(\''+esc(f.id)+'\',\'valor\',this.value)" style="width:130px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:14px;padding:5px 8px;outline:none;text-align:right">'+
-            '<select onchange="updFisico(\''+esc(f.id)+'\',\'moneda\',this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:11px;font-family:var(--mono);padding:4px 6px;border-radius:5px;outline:none"><option value="MXN"'+(f.moneda==='MXN'?' selected':'')+'>MXN</option><option value="USD"'+(f.moneda==='USD'?' selected':'')+'>USD</option></select>'+
+          '<div style="display:flex;align-items:center;gap:4px"><span style="font-size:10px;color:var(--text3)">Base</span>'+
+            '<input type="number" value="'+base+'" step="0.01" onchange="updFisico(\''+esc(f.id)+'\',\'valor\',this.value)" title="Valor base — al editarlo se actualiza la fecha base" style="width:115px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:13px;padding:5px 8px;outline:none;text-align:right">'+
           '</div>'+
-          (f.moneda==='USD'?'<div style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:110px;text-align:right">≈ '+fmt(valMxn)+' MXN</div>':'')+
+          '<div style="display:flex;align-items:center;gap:4px"><span style="font-size:10px;color:var(--text3)">% año</span>'+
+            '<input type="number" value="'+tasa+'" step="0.01" onchange="updFisico(\''+esc(f.id)+'\',\'tasaAnual\',this.value)" title="Plusvalía positiva, minusvalía negativa" style="width:70px;background:var(--bg4);border:1px solid var(--border);border-radius:6px;color:'+tendCol+';font-family:var(--mono);font-size:13px;padding:5px 8px;outline:none;text-align:right">'+
+          '</div>'+
+          '<select onchange="updFisico(\''+esc(f.id)+'\',\'moneda\',this.value)" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:11px;font-family:var(--mono);padding:4px 6px;border-radius:5px;outline:none"><option value="MXN"'+(f.moneda==='MXN'?' selected':'')+'>MXN</option><option value="USD"'+(f.moneda==='USD'?' selected':'')+'>USD</option></select>'+
+          '<div style="font-size:14px;font-family:var(--mono);font-weight:600;color:'+(delta>=0?'var(--green)':'var(--red)')+';min-width:110px;text-align:right" title="Valor actual estimado">'+fmt(actual)+(f.moneda==='USD'?'<div style="font-size:9px;color:var(--text3);font-weight:400">≈ '+fmt(actualMxn)+' MXN</div>':'')+'</div>'+
           '<input type="color" value="'+(f.color||'#a8d76b')+'" onchange="updFisico(\''+esc(f.id)+'\',\'color\',this.value)" style="width:24px;height:24px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0">'+
           '<button class="btn-del" onclick="delFisico(\''+esc(f.id)+'\')">✕</button>'+
         '</div>'+
       '</div>';
     }).join('');
     var totMxn=totalFisicosMxn();
-    listEl.innerHTML+='<div class="row" style="font-weight:500;border-bottom:none;margin-top:6px"><div class="row-main" style="color:var(--text2);font-size:12px">TOTAL EN MXN</div><div style="color:var(--green);font-family:var(--mono);font-size:15px;font-weight:600">'+fmt(totMxn)+'</div></div>';
+    listEl.innerHTML+='<div class="row" style="font-weight:500;border-bottom:none;margin-top:6px"><div class="row-main" style="color:var(--text2);font-size:12px">TOTAL ACTUAL EN MXN</div><div style="color:var(--green);font-family:var(--mono);font-size:15px;font-weight:600">'+fmt(totMxn)+'</div></div>';
   }
 }
 window.addFisico=function(){
   var n=document.getElementById('fis-nombre').value.trim();
   var cat=document.getElementById('fis-categoria').value;
   var v=parseFloat(document.getElementById('fis-valor').value)||0;
+  var t=parseFloat(document.getElementById('fis-tasa').value)||0;
   var mon=document.getElementById('fis-moneda').value;
   var col=document.getElementById('fis-color').value;
   if(!n){ toast('Falta nombre',true); return; }
-  fisicos.push({id:'fis_'+Date.now().toString(36),nombre:n,categoria:cat,valor:v,moneda:mon,color:col,lastUpdate:new Date().toISOString(),historia:[{fecha:new Date().toISOString().slice(0,10),valor:v}]});
-  document.getElementById('fis-nombre').value=''; document.getElementById('fis-valor').value='';
+  var hoy=new Date().toISOString();
+  fisicos.push({id:'fis_'+Date.now().toString(36),nombre:n,categoria:cat,valor:v,tasaAnual:t,moneda:mon,color:col,fechaBase:hoy,lastUpdate:hoy,historia:[{fecha:hoy.slice(0,10),valor:v}]});
+  document.getElementById('fis-nombre').value=''; document.getElementById('fis-valor').value=''; document.getElementById('fis-tasa').value='';
   save(); renderFisicosSection(); renderCategoriasChart();
   toast('Activo agregado');
 };
 window.updFisico=function(id,f,v){
   var x=fisicos.find(function(o){return o.id===id;}); if(!x) return;
-  if(f==='valor') v=parseFloat(v)||0;
+  if(f==='valor'||f==='tasaAnual') v=parseFloat(v)||0;
   if(f==='nombre'){ var nv=(v||'').trim(); if(!nv){ renderFisicosSection(); return; } v=nv; }
   x[f]=v;
-  x.lastUpdate=new Date().toISOString();
+  var hoy=new Date().toISOString();
+  x.lastUpdate=hoy;
+  // Cuando se edita el valor base, reseteamos la fecha base para que la tasa se aplique desde hoy
   if(f==='valor'){
+    x.fechaBase=hoy;
     if(!x.historia) x.historia=[];
-    var hoy=new Date().toISOString().slice(0,10);
+    var hoyD=hoy.slice(0,10);
     var last=x.historia[x.historia.length-1];
-    if(last && last.fecha===hoy) last.valor=v;
-    else x.historia.push({fecha:hoy,valor:v});
+    if(last && last.fecha===hoyD) last.valor=v;
+    else x.historia.push({fecha:hoyD,valor:v});
   }
   save(); renderFisicosSection(); renderCategoriasChart();
 };
@@ -2313,9 +2340,17 @@ window.delFisico=function(id){
 // ── Patrimonio por categoría: chart con las 5 categorías ──
 function computeCategoriaTotals(){
   var liquido=0, deuda=0, inv=0;
-  var saldosIni=state.saldosIniciales||{};
+  // Use the latest month from cache if it's more recent than the currently-viewed month;
+  // fall back to state. Ensures the chart reflects the freshest saldos available.
+  var sourceData=state;
+  var currentKey=parseInt(currentAnio,10)*12+MESES.indexOf(currentMes);
+  if(globalCache && globalCache.months && globalCache.months.length){
+    var latest=globalCache.months[globalCache.months.length-1];
+    if((latest.anio*12+latest.mes) > currentKey) sourceData=latest.data;
+  }
+  var saldosIni=sourceData.saldosIniciales||{};
   var mov={};
-  (state.gastos||[]).forEach(function(g){ if(!g.mp) return; if(!mov[g.mp]) mov[g.mp]={ing:0,egr:0}; if(gTipo(g)==='ingreso') mov[g.mp].ing+=g.monto; else mov[g.mp].egr+=g.monto; });
+  (sourceData.gastos||[]).forEach(function(g){ if(!g.mp) return; if(!mov[g.mp]) mov[g.mp]={ing:0,egr:0}; if((g.tipo||'egreso')==='ingreso') mov[g.mp].ing+=g.monto; else mov[g.mp].egr+=g.monto; });
   medios.forEach(function(m){
     if(m.tipo==='Inversión'){ (m.posiciones||[]).forEach(function(p){ inv+=valorPos(p); }); return; }
     var ini=saldosIni[m.nombre]||0;
