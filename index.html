@@ -2242,15 +2242,26 @@ async function renderGlobal(){
     mc('Mínimo',fmt(minV),'red')+
     mc('Mejor mes',bestM?(bestM.diff>=0?'+':'')+fmt(bestM.diff):'—',bestM&&bestM.diff>=0?'green':'red',bestM?bestM.date:'')+
     mc('Drawdown máx',Math.round(ddMax*100)/100+'%',ddMax<-10?'red':'amber','desde pico');
-  // Chart de evolución (resolución diaria)
+  // Chart de evolución (resolución diaria con formato adaptativo por rango)
   if(globalChart) globalChart.destroy();
   var ctx=document.getElementById('global-chart');
   if(ctx){
-    var labels=filteredDaily.map(function(s){var p=s.date.split('-');return p[2]+'/'+p[1]+'/'+p[0].slice(2);});
-    var ptR=filteredDaily.length<31?2.5:(filteredDaily.length<92?1.5:0);
+    var useShortFmt=(globalRange==='1y'||globalRange==='2y'||globalRange==='5y'||globalRange==='all');
+    var labels=filteredDaily.map(function(s){
+      var p=s.date.split('-');
+      return useShortFmt?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);
+    });
+    var rangeTicks={'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
+    var maxTicks=rangeTicks[globalRange]||12;
+    var n=filteredDaily.length;
+    var ptR=n<31?2.5:(n<92?1.2:(n<366?0.6:0));
+    var fullTooltipFmt=function(label){
+      // label en formato DD/MM o MM/YY; tomar el ítem original
+      return label;
+    };
     globalChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
-      {label:'Patrimonio',data:filteredDaily.map(function(s){return s.patrimonio;}),borderColor:change>=0?'#1fd196':'#f05c5c',backgroundColor:(change>=0?'rgba(31,209,150,0.1)':'rgba(240,92,92,0.1)'),fill:true,tension:0.25,pointRadius:ptR,pointBackgroundColor:change>=0?'#1fd196':'#f05c5c',borderWidth:2}
-    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:14},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+      {label:'Patrimonio',data:filteredDaily.map(function(s){return s.patrimonio;}),borderColor:change>=0?'#1fd196':'#f05c5c',backgroundColor:(change>=0?'rgba(31,209,150,0.1)':'rgba(240,92,92,0.1)'),fill:true,tension:0.25,pointRadius:ptR,pointHoverRadius:4,pointBackgroundColor:change>=0?'#1fd196':'#f05c5c',borderWidth:2}
+    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var s=filteredDaily[i]; if(!s) return ''; var p=s.date.split('-'); return p[2]+'/'+p[1]+'/'+p[0];},label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:maxTicks},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
   }
   // Composition chart: stacked bars per month (liquid, inversion, -deuda)
   if(globalCompChart) globalCompChart.destroy();
