@@ -93,7 +93,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .fg3{grid-template-columns:1fr 1fr 1fr}
 .fg4{grid-template-columns:2fr 1fr 1fr 1fr}
 .fg5{grid-template-columns:2fr 1fr 1fr 1fr 1fr}
-.fg6{grid-template-columns:.75fr 1.6fr 1.1fr 1.1fr 1fr 1fr}
+.fg6{grid-template-columns:.7fr 1.4fr 1.6fr 1fr .9fr .9fr}
 .tipo-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;letter-spacing:0.04em;text-transform:uppercase;flex-shrink:0}
 .tipo-badge.ing{background:rgba(31,209,150,0.15);color:var(--green)}
 .tipo-badge.egr{background:rgba(240,92,92,0.13);color:var(--red)}
@@ -475,7 +475,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
               <select id="bit-tipo" onchange="syncBitTipo()"><option value="egreso">Egreso</option><option value="ingreso">Ingreso</option></select>
             </div>
             <div class="field"><label>Descripción</label><input type="text" id="bit-desc" placeholder="Ej. Cena restaurante"></div>
-            <div class="field"><label id="bit-cat-lbl">Categoría</label><select id="bit-cat-sel"></select></div>
+            <div class="field"><label id="bit-cat-lbl">Categoría</label>
+              <div style="display:flex;gap:4px">
+                <select id="bit-cat-sel" onchange="syncBitSubcat()" style="flex:1;min-width:0"></select>
+                <select id="bit-subcat-sel" style="flex:1;min-width:0;display:none"></select>
+              </div>
+            </div>
             <div class="field"><label>Medio de pago</label><select id="bit-mp-sel" onchange="syncBitMsiVisibility()"></select></div>
             <div class="field"><label>Monto ($)</label><input type="number" id="bit-monto" placeholder="0" min="0" step="0.01"></div>
             <div class="field"><label>Fecha</label><input type="date" id="bit-fecha"></div>
@@ -883,18 +888,53 @@ function buildEgresoCatOpts(cur){
   }
   return html;
 }
+function buildEgresoCatOptsTop(cur){
+  // Solo top-level + huérfanos. Si cur no existe, lo agregamos como 'Actual'.
+  var topLevel=cats.filter(function(c){return !c.parentId;});
+  var orphans=cats.filter(function(c){return c.parentId && !cats.find(function(p){return p.id===c.parentId;});});
+  var html='';
+  // Si cur es una subcategoría (y no se migró aún), promovemos al padre por compat
+  var displayedCur=cur;
+  if(cur && !topLevel.find(function(c){return c.nombre===cur;}) && !orphans.find(function(c){return c.nombre===cur;})){
+    var sub=cats.find(function(c){return c.nombre===cur && c.parentId;});
+    if(sub){ var par=cats.find(function(c){return c.id===sub.parentId;}); if(par) displayedCur=par.nombre; }
+    else { html+='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>'; }
+  }
+  html+=topLevel.map(function(c){return '<option value="'+esc(c.nombre)+'"'+(c.nombre===displayedCur?' selected':'')+'>'+esc(c.nombre)+'</option>';}).join('');
+  if(orphans.length){
+    html+='<optgroup label="Sin padre">';
+    orphans.forEach(function(c){ html+='<option value="'+esc(c.nombre)+'"'+(c.nombre===displayedCur?' selected':'')+'>'+esc(c.nombre)+'</option>'; });
+    html+='</optgroup>';
+  }
+  return html;
+}
+window.syncBitSubcat=function(){
+  var catEl=document.getElementById('bit-cat-sel');
+  var subEl=document.getElementById('bit-subcat-sel');
+  if(!catEl||!subEl) return;
+  var catName=catEl.value;
+  var parent=cats.find(function(c){return c.nombre===catName && !c.parentId;});
+  var subs=parent?cats.filter(function(c){return c.parentId===parent.id;}):[];
+  if(!subs.length){ subEl.style.display='none'; subEl.innerHTML=''; return; }
+  subEl.style.display=''; var cur=subEl.value;
+  subEl.innerHTML='<option value="">— sin sub —</option>'+
+    subs.map(function(s){return '<option value="'+esc(s.nombre)+'"'+(s.nombre===cur?' selected':'')+'>'+esc(s.nombre)+'</option>';}).join('');
+};
 function populateCatSel(){
   var el=document.getElementById('bit-cat-sel'); if(!el) return;
   var tipoEl=document.getElementById('bit-tipo');
   var tipo=tipoEl?tipoEl.value:'egreso';
   var lbl=document.getElementById('bit-cat-lbl');
   var cur=el.value;
+  var subEl=document.getElementById('bit-subcat-sel');
   if(tipo==='ingreso'){
     if(lbl) lbl.textContent='Fuente';
     el.innerHTML=buildIngresoCatOpts(cur);
+    if(subEl){ subEl.style.display='none'; subEl.innerHTML=''; }
   } else {
     if(lbl) lbl.textContent='Categoría';
-    el.innerHTML=buildEgresoCatOpts(cur);
+    el.innerHTML=buildEgresoCatOptsTop(cur);
+    syncBitSubcat();
   }
 }
 window.syncBitTipo=function(){ populateCatSel(); syncBitMsiVisibility(); };
@@ -1191,8 +1231,23 @@ window.delDist=function(id){ state.distribucion=state.distribucion.filter(functi
 // ════════════════════════════════════════════════
 //  BITÁCORA
 // ════════════════════════════════════════════════
+function migrateGastoSubcats(){
+  if(!state.gastos) return false;
+  var changed=false;
+  state.gastos.forEach(function(g){
+    if(!g.cat || g.subcat) return;
+    if((g.tipo||'egreso')!=='egreso') return;
+    var sub=cats.find(function(c){return c.nombre===g.cat && c.parentId;});
+    if(!sub) return;
+    var par=cats.find(function(c){return c.id===sub.parentId;});
+    if(!par) return;
+    g.subcat=g.cat; g.cat=par.nombre; changed=true;
+  });
+  return changed;
+}
 function renderBitacora(){
   document.getElementById('lbl-bit').innerHTML=mesLabel();
+  if(migrateGastoSubcats()) save(true);
   populateCatSel(); populateMediosSels(); syncBitMsiVisibility();
   var fechaEl=document.getElementById('bit-fecha');
   if(!fechaEl.value){ var n=new Date(); fechaEl.value=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0'); }
@@ -1273,7 +1328,18 @@ function renderBitacora(){
     var isIng=(t==='ingreso');
     var catOpts=isIng
       ? buildIngresoCatOpts(g.cat)
-      : buildEgresoCatOpts(g.cat);
+      : buildEgresoCatOptsTop(g.cat);
+    var subcatSel='';
+    if(!isIng){
+      var parCat=cats.find(function(c){return c.nombre===g.cat && !c.parentId;});
+      var subList=parCat?cats.filter(function(c){return c.parentId===parCat.id;}):[];
+      if(subList.length){
+        subcatSel='<select class="sel-inline" onchange="updGasto('+g.id+',\'subcat\',this.value)">'+
+          '<option value="">— sub —</option>'+
+          subList.map(function(s){return '<option value="'+esc(s.nombre)+'"'+(s.nombre===(g.subcat||'')?' selected':'')+'>'+esc(s.nombre)+'</option>';}).join('')+
+          '</select>';
+      }
+    }
     var mpOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===g.mp?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
     var mpCol=medioColor(g.mp||'');
     var dotCol=isIng?'#1fd196':catColor(g.cat);
@@ -1286,6 +1352,7 @@ function renderBitacora(){
         '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px">'+
           edt(g.desc,'max-width:200px','updGasto('+g.id+',\'desc\',this.value)')+
           '<select class="sel-inline" onchange="updGasto('+g.id+',\'cat\',this.value)">'+catOpts+'</select>'+
+          subcatSel+
           '<select class="sel-inline" style="border-color:'+mpCol+'44;color:'+mpCol+'" onchange="updGasto('+g.id+',\'mp\',this.value)">'+mpOpts+'</select>'+
         '</div>'+
         '<div class="bit-meta">'+fmtDate(g.fecha)+'</div>'+
@@ -1303,12 +1370,17 @@ window.addGasto=function(){
   var tipo=document.getElementById('bit-tipo').value||'egreso';
   var desc=document.getElementById('bit-desc').value.trim();
   var cat=document.getElementById('bit-cat-sel').value;
+  var subcat='';
+  if(tipo==='egreso'){
+    var subEl=document.getElementById('bit-subcat-sel');
+    if(subEl && subEl.style.display!=='none') subcat=(subEl.value||'').trim();
+  }
   var mp=document.getElementById('bit-mp-sel').value;
   var monto=parseFloat(document.getElementById('bit-monto').value)||0;
   var fecha=document.getElementById('bit-fecha').value;
   if(!desc||!monto) return;
   if(!state.gastos) state.gastos=[];
-  state.gastos.push({id:state.nextId++,tipo:tipo,desc:desc,cat:cat,mp:mp,monto:monto,fecha:fecha});
+  state.gastos.push({id:state.nextId++,tipo:tipo,desc:desc,cat:cat,subcat:subcat,mp:mp,monto:monto,fecha:fecha});
   var compraCreada=false;
   if(tipo==='egreso'){
     var medio=medios.find(function(x){return x.nombre===mp;});
@@ -1332,7 +1404,14 @@ window.updGasto=function(id,f,v){
   if(f==='monto'){
     g.monto=parseFloat(v)||0;
     if(g.transferId){ state.gastos.forEach(function(x){ if(x.id!==g.id && x.transferId===g.transferId) x.monto=g.monto; }); }
-  } else { g[f]=(v||'').trim()||g[f]; }
+  } else if(f==='cat'){
+    g.cat=(v||'').trim()||g.cat;
+    g.subcat=''; // reset subcat al cambiar de cat
+  } else if(f==='subcat'){
+    g.subcat=(v||'').trim();
+  } else {
+    g[f]=(v||'').trim()||g[f];
+  }
   save(); renderBitacora(); renderIngresos(); renderResumen(); renderSaldos();
 };
 window.delGasto=function(id){
