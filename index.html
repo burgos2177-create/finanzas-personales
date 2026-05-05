@@ -380,8 +380,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         </div>
         <div class="card">
           <div class="card-header"><div class="card-title">Evolución del patrimonio total</div><div id="total-chart-label" class="card-badge"></div></div>
-          <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Suma de las 5 categorías (líquidos + inversiones + empresas + físicos − deuda) según el rango seleccionado arriba.</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Suma de las 5 categorías (líquidos + inversiones + empresas + físicos − deuda).</div>
           <div class="ch-wrap" style="height:280px"><canvas id="total-chart"></canvas></div>
+          <div class="bit-toolbar" id="total-ranges" style="margin-top:14px;justify-content:center"></div>
         </div>
       </div>
 
@@ -690,7 +691,7 @@ var FISICO_CATS={Auto:'🚗',Casa:'🏠',Terreno:'🏞️',Otro:'📦'};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null;
-var selectedWeekIdx=null, globalRange='all', globalCache=null;
+var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
 
@@ -2223,6 +2224,9 @@ function filterSeriesByRange(series, range){
   var last=new Date(series[series.length-1].date);
   var cutoff;
   switch(range){
+    case '1d': cutoff=new Date(last); break; // sólo el último día
+    case '1s': cutoff=new Date(last); cutoff.setDate(cutoff.getDate()-6); break;
+    case '15d': cutoff=new Date(last); cutoff.setDate(cutoff.getDate()-14); break;
     case '1m': cutoff=new Date(last); cutoff.setMonth(cutoff.getMonth()-1); break;
     case '3m': cutoff=new Date(last); cutoff.setMonth(cutoff.getMonth()-3); break;
     case '6m': cutoff=new Date(last); cutoff.setMonth(cutoff.getMonth()-6); break;
@@ -2257,7 +2261,7 @@ async function renderGlobal(){
     document.getElementById('global-summary').innerHTML='<div class="empty" style="grid-column:1/-1">Sin datos históricos. Guarda al menos un mes para ver el resumen global.</div>';
     return;
   }
-  var ranges=[{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
+  var ranges=[{k:'1d',l:'1D'},{k:'1s',l:'1S'},{k:'15d',l:'15D'},{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
   document.getElementById('global-ranges').innerHTML=ranges.map(function(r){return '<div class="chip '+(r.k===globalRange?'active':'')+'" onclick="setGlobalRange(\''+r.k+'\')">'+r.l+'</div>';}).join('');
   var filteredDaily=filterSeriesByRange(seriesDaily, globalRange);
   var filtered=filterSeriesByRange(series, globalRange);
@@ -2299,7 +2303,7 @@ async function renderGlobal(){
       var p=s.date.split('-');
       return useShortFmt?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);
     });
-    var rangeTicks={'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
+    var rangeTicks={'1d':1,'1s':7,'15d':10,'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
     var maxTicks=rangeTicks[globalRange]||12;
     var n=filteredDaily.length;
     var ptR=n<31?2.5:(n<92?1.2:(n<366?0.6:0));
@@ -2324,6 +2328,7 @@ async function renderGlobal(){
   }
 }
 window.setGlobalRange=function(r){ globalRange=r; renderGlobal(); };
+window.setTotalRange=function(r){ totalRange=r; renderPatrimonioTotalChart(); };
 window.refreshGlobal=function(){ globalCache=null; renderGlobal(); };
 
 // ── Empresas: listener en tiempo real + CRUD ──
@@ -2599,17 +2604,21 @@ function renderCategoriasChart(){
 }
 function renderPatrimonioTotalChart(){
   var ctx=document.getElementById('total-chart'); if(!ctx) return;
+  // Render chips de rango propios (independientes del chart de arriba)
+  var ranges=[{k:'1d',l:'1D'},{k:'1s',l:'1S'},{k:'15d',l:'15D'},{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
+  var rangesEl=document.getElementById('total-ranges');
+  if(rangesEl) rangesEl.innerHTML=ranges.map(function(r){return '<div class="chip '+(r.k===totalRange?'active':'')+'" onclick="setTotalRange(\''+r.k+'\')">'+r.l+'</div>';}).join('');
   if(!globalCache||!globalCache.seriesDaily||!globalCache.seriesDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
-  var filteredDaily=filterSeriesByRange(globalCache.seriesDaily, globalRange);
+  var filteredDaily=filterSeriesByRange(globalCache.seriesDaily, totalRange);
   if(!filteredDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
   var first=filteredDaily[0], last=filteredDaily[filteredDaily.length-1];
   var change=last.patrimonioTotal-first.patrimonioTotal;
   var changePct=first.patrimonioTotal!==0?Math.round(change/Math.abs(first.patrimonioTotal)*10000)/100:0;
   document.getElementById('total-chart-label').textContent=fmt(last.patrimonioTotal)+' · '+(change>=0?'+':'')+fmt(change)+' ('+(changePct>=0?'+':'')+changePct+'%)';
-  var useShortFmt=(globalRange==='1y'||globalRange==='2y'||globalRange==='5y'||globalRange==='all');
+  var useShortFmt=(totalRange==='1y'||totalRange==='2y'||totalRange==='5y'||totalRange==='all');
   var labels=filteredDaily.map(function(s){var p=s.date.split('-'); return useShortFmt?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);});
-  var rangeTicks={'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
-  var maxTicks=rangeTicks[globalRange]||12;
+  var rangeTicks={'1d':1,'1s':7,'15d':10,'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
+  var maxTicks=rangeTicks[totalRange]||12;
   var n=filteredDaily.length;
   var ptR=n<31?2.5:(n<92?1.2:(n<366?0.6:0));
   var col=change>=0?'#9b8ef7':'#f05c5c';
