@@ -1553,8 +1553,14 @@ function renderMedios(){
   document.getElementById('mp-list').innerHTML=medios.map(function(m){
     var tipoOpts=TIPOS.map(function(t){return '<option value="'+t+'"'+(t===m.tipo?' selected':'')+'>'+t+'</option>';}).join('');
     var lineaField = m.tipo==='Crédito'
-      ? '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text3);padding-left:48px"><span>Línea de crédito $</span>'+
-        '<input class="inline-g-num" type="number" value="'+(m.lineaCredito||0)+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)" style="width:120px"></div>'
+      ? '<div style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:11px;color:var(--text3);padding-left:48px;flex-wrap:wrap">'+
+        '<div style="display:flex;align-items:center;gap:6px"><span>Línea $</span>'+
+          '<input class="inline-g-num" type="number" value="'+(m.lineaCredito||0)+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)" style="width:110px"></div>'+
+        '<div style="display:flex;align-items:center;gap:6px"><span>Día corte</span>'+
+          '<input class="inline-g-num" type="number" value="'+(m.diaCorte||'')+'" min="1" max="31" placeholder="—" onchange="updMedio('+m.id+',\'diaCorte\',this.value)" style="width:55px"></div>'+
+        '<div style="display:flex;align-items:center;gap:6px"><span>Día pago</span>'+
+          '<input class="inline-g-num" type="number" value="'+(m.diaPago||'')+'" min="1" max="31" placeholder="—" onchange="updMedio('+m.id+',\'diaPago\',this.value)" style="width:55px"></div>'+
+      '</div>'
       : '';
     return '<div class="mp-card" style="flex-direction:column;align-items:stretch;gap:0">'+
       '<div style="display:flex;align-items:center;gap:10px">'+
@@ -1576,6 +1582,7 @@ function renderMedios(){
 window.updMedio=function(id,f,v){
   var m=medios.find(function(m){return m.id===id;}); if(!m) return;
   if(f==='lineaCredito'){ m.lineaCredito=parseFloat(v)||0; }
+  else if(f==='diaCorte'||f==='diaPago'){ var n=parseInt(v,10); if(n>=1&&n<=31) m[f]=n; else delete m[f]; }
   else if(f==='nombre'){
     var nv=(v||'').trim(); if(!nv||nv===m.nombre){ save(); renderMedios(); return; }
     if(medios.find(function(o){return o.id!==m.id && o.nombre.toLowerCase()===nv.toLowerCase();})){ toast('Nombre ya existe',true); renderMedios(); return; }
@@ -3142,6 +3149,41 @@ window.realizarPagoTC=function(fromMedioId){
 // ════════════════════════════════════════════════
 //  SALDOS
 // ════════════════════════════════════════════════
+function daysInMonth(y, m){ return new Date(y, m+1, 0).getDate(); }
+function lastCutoffDate(diaCorte, today){
+  if(!diaCorte || diaCorte<1 || diaCorte>31) return null;
+  today = today || new Date();
+  var ty=today.getFullYear(), tm=today.getMonth(), td=today.getDate();
+  var thisCutDay=Math.min(diaCorte, daysInMonth(ty,tm));
+  if(td>=thisCutDay) return new Date(ty,tm,thisCutDay);
+  var prevY=tm===0?ty-1:ty, prevM=tm===0?11:tm-1;
+  var prevCutDay=Math.min(diaCorte, daysInMonth(prevY,prevM));
+  return new Date(prevY,prevM,prevCutDay);
+}
+function saldoTcAtDate(mpName, dateRef){
+  // Saldo a pagar de TC mpName en la fecha dateRef. Devuelve null si no tenemos datos del mes correspondiente.
+  if(!dateRef) return null;
+  var dateStr=isoDate(dateRef);
+  var dy=dateRef.getFullYear(), dm=dateRef.getMonth();
+  var curY=parseInt(currentAnio,10), curM=MESES.indexOf(currentMes);
+  var sourceData=null;
+  if(dy===curY && dm===curM){
+    sourceData=state;
+  } else if(globalCache && globalCache.months){
+    var match=globalCache.months.find(function(x){return x.anio===dy && x.mes===dm;});
+    if(match) sourceData=match.data;
+  }
+  if(!sourceData) return null;
+  var ini=(sourceData.saldosIniciales||{})[mpName]||0;
+  var egr=0, ing=0;
+  (sourceData.gastos||[]).forEach(function(g){
+    if(g.mp!==mpName) return;
+    if(!g.fecha || g.fecha>dateStr) return;
+    if((g.tipo||'egreso')==='ingreso') ing+=g.monto;
+    else egr+=g.monto;
+  });
+  return ini+egr-ing;
+}
 function movByMp(){
   var m={};
   (state.gastos||[]).forEach(function(g){
@@ -3194,10 +3236,18 @@ function renderSaldos(){
   var html=medios.map(function(m){
     var mv=mov[m.nombre]||{ing:0,egr:0};
     var isCred=m.tipo==='Crédito';
+    var creditExtra='';
+    if(m.tipo==='Crédito' && (m.diaCorte||m.diaPago)){
+      var bits=[];
+      if(m.diaCorte) bits.push('corte día '+m.diaCorte);
+      if(m.diaPago) bits.push('pago día '+m.diaPago);
+      if(m.lineaCredito) bits.push('línea '+fmt(m.lineaCredito));
+      creditExtra='<div style="font-size:10px;color:var(--text3);margin-top:1px">'+bits.join(' · ')+'</div>';
+    }
     var head='<div class="saldo-head">'+
       '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+'">'+(m.icono||TIPO_ICONS[m.tipo]||'💳')+'</div>'+
       '<div style="flex:1"><div class="saldo-name" style="color:'+m.color+'">'+esc(m.nombre)+'</div>'+
-        '<div class="saldo-tipo">'+esc(m.tipo)+(m.notas?' · '+esc(m.notas):'')+'</div></div></div>';
+        '<div class="saldo-tipo">'+esc(m.tipo)+(m.notas?' · '+esc(m.notas):'')+'</div>'+creditExtra+'</div></div>';
     var statsHtml, footer='';
     if(isCred){
       var linea=m.lineaCredito||0;
@@ -3211,9 +3261,18 @@ function renderSaldos(){
         ? '<div class="saldo-stat" title="Deuda traída de meses anteriores. No cuenta como cargo del mes."><div class="saldo-stat-lbl">Deuda heredada</div>'+
           '<input type="number" value="'+deudaIni+'" step="0.01" min="0" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'
         : '';
+      // Saldo al corte
+      var corteDate=lastCutoffDate(m.diaCorte);
+      var saldoCorte=corteDate?saldoTcAtDate(m.nombre,corteDate):null;
+      var corteSubLbl=corteDate?(corteDate.getDate()+'/'+String(corteDate.getMonth()+1).padStart(2,'0')):'';
+      var saldoCorteHtml=m.diaCorte
+        ? '<div class="saldo-stat" title="Saldo a pagar al último corte ('+corteSubLbl+')"><div class="saldo-stat-lbl">Saldo al corte</div>'+
+          '<div class="saldo-stat-val '+(saldoCorte!==null && saldoCorte>0?'red':'')+'">'+(saldoCorte!==null?fmt(saldoCorte):'—')+'</div>'+
+          (corteSubLbl?'<div style="font-size:9px;color:var(--text3);margin-top:2px">'+corteSubLbl+'</div>':'')+
+        '</div>'
+        : '<div class="saldo-stat" title="Configura día de corte en Medios de Pago"><div class="saldo-stat-lbl">Saldo al corte</div><div class="saldo-stat-val" style="color:var(--text3);font-size:13px">configura corte</div></div>';
       statsHtml=
-        '<div class="saldo-stat"><div class="saldo-stat-lbl">Línea autorizada</div>'+
-          '<input type="number" value="'+linea+'" min="0" onchange="updMedio('+m.id+',\'lineaCredito\',this.value)"></div>'+
+        saldoCorteHtml+
         deudaIniStat+
         saldoStat('Cargos del mes',fmt(cargos),'red')+
         saldoStat('Abonos / pagos',fmt(abonos),'green')+
