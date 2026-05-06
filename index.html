@@ -4232,22 +4232,22 @@ function renderSaldos(){
   var saldosIni=state.saldosIniciales||{};
   var totActivos=0, totDeuda=0, totLineaUsada=0, totLinea=0;
   medios.forEach(function(m){
-    var mv=mov[m.nombre]||{ing:0,egr:0};
+    var mv=mov[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0};
     if(m.tipo==='Crédito'){
       var deudaIni=saldosIni[m.nombre]||0;
-      var aPagar=deudaIni+mv.egr-mv.ing;
+      var aPagar=deudaIni+mv.egr+(mv.trfOut||0)-mv.ing-(mv.trfIn||0);
       if(aPagar>0) totDeuda+=aPagar;
       totLinea+=(m.lineaCredito||0);
       totLineaUsada+=Math.max(aPagar,0);
     } else {
       var ini=saldosIni[m.nombre]||0;
-      totActivos+=ini+mv.ing-mv.egr;
+      totActivos+=ini+mv.ing+(mv.trfIn||0)-mv.egr-(mv.trfOut||0);
     }
   });
   var neto=totActivos-totDeuda;
   var pctLinea=totLinea>0?Math.round(totLineaUsada/totLinea*100):0;
   var totInv=totalInversiones();
-  var liquidos=totActivos-medios.filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){var ini=saldosIni[m.nombre]||0; var mv=mov[m.nombre]||{ing:0,egr:0}; return a+ini+mv.ing-mv.egr;},0);
+  var liquidos=totActivos-medios.filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){var ini=saldosIni[m.nombre]||0; var mv=mov[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0}; return a+ini+mv.ing+(mv.trfIn||0)-mv.egr-(mv.trfOut||0);},0);
   var patrimonio=liquidos+totInv-totDeuda;
   document.getElementById('saldos-summary').innerHTML=
     mc('Líquidos',fmt(liquidos),liquidos<0?'red':'green',medios.filter(function(m){return m.tipo!=='Crédito'&&m.tipo!=='Inversión';}).length+' cuentas')+
