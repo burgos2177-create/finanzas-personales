@@ -2166,13 +2166,14 @@ window.refreshInvPrices=async function(medioId,btnEl){
   // 1) USD/MXN
   var rate=await fetchUsdMxn();
   if(rate){ globalConfig.usdRate=Math.round(rate*10000)/10000; }
-  // 2) Crypto en batch
-  var cryptoSymbols=positions.filter(function(p){return p.subtipo==='Cripto'&&p.simbolo;}).map(function(p){return p.simbolo;});
+  // 2) Crypto en batch (excluyendo posiciones líquidas)
+  var cryptoSymbols=positions.filter(function(p){return p.subtipo==='Cripto'&&p.simbolo&&!p.liquid;}).map(function(p){return p.simbolo;});
   var cryptoPrices=cryptoSymbols.length?await fetchCryptoPrices(cryptoSymbols):{};
-  // 3) Stocks individuales
+  // 3) Stocks individuales (excluyendo líquidos)
   var updated=0, failed=[];
   for(var i=0;i<positions.length;i++){
     var p=positions[i];
+    if(p.liquid) continue;
     if(p.subtipo==='Acciones' && p.ticker){
       var price=await fetchStockPrice(p.ticker);
       if(price!==null && !isNaN(price)){
@@ -3406,7 +3407,7 @@ function renderInversion(){
     var posiciones=m.posiciones||[];
     var aport=aportadoInv(m), actual=valorInversion(m), gan=actual-aport;
     var pctI=aport>0?Math.round(gan/aport*10000)/100:0;
-    var hasFetchable=posiciones.some(function(p){return (p.subtipo==='Acciones'&&p.ticker)||(p.subtipo==='Cripto'&&p.simbolo);});
+    var hasFetchable=posiciones.some(function(p){return !p.liquid && ((p.subtipo==='Acciones'&&p.ticker)||(p.subtipo==='Cripto'&&p.simbolo));});
     var refreshBtn=hasFetchable
       ? '<button class="btn" style="padding:5px 11px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="refreshInvPrices('+m.id+',this)" title="Obtener precios en vivo y USD/MXN">🔄 Precios</button>'
       : '';
