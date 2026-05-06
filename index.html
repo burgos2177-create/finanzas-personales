@@ -3700,6 +3700,37 @@ window.executeTransfer=function(fromMedioId){
   if(to.id===from.id){ toast('Origen y destino iguales',true); return; }
   var monto=parseFloat(document.getElementById('trf-monto-'+fromMedioId).value)||0;
   if(!monto){ toast('Falta el monto',true); return; }
+  // Si origen o destino es Inversión, resolver posición líquida
+  var fromLiquid=null, toLiquid=null;
+  if(from.tipo==='Inversión'){
+    fromLiquid=(from.posiciones||[]).find(function(p){return p.liquid===true;});
+    if(!fromLiquid){ toast(from.nombre+' no tiene posición líquida (💧). Marca una en Inversión primero.',true); return; }
+  }
+  if(to.tipo==='Inversión'){
+    toLiquid=(to.posiciones||[]).find(function(p){return p.liquid===true;});
+    if(!toLiquid){ toast(to.nombre+' no tiene posición líquida (💧). Marca una en Inversión primero.',true); return; }
+  }
+  // Verificar moneda compatible
+  var fromMon=fromLiquid?(fromLiquid.moneda||'MXN'):'MXN';
+  var toMon=toLiquid?(toLiquid.moneda||'MXN'):'MXN';
+  if(fromMon!==toMon){
+    toast('Monedas distintas ('+fromMon+'→'+toMon+'). Usa Depositar/Retirar en Inversión para conversión.',true);
+    return;
+  }
+  // Validar saldo en líquido origen
+  if(fromLiquid && (fromLiquid.cantidad||0) < monto - 0.005){
+    toast('Saldo insuficiente en '+from.nombre+' (líquido '+fmt(fromLiquid.cantidad||0)+' '+fromMon+')',true);
+    return;
+  }
+  // Aplicar movimientos en líquidos
+  if(fromLiquid){
+    fromLiquid.cantidad=(fromLiquid.cantidad||0)-monto;
+    appendHistoriaPos(fromLiquid);
+  }
+  if(toLiquid){
+    toLiquid.cantidad=(toLiquid.cantidad||0)+monto;
+    appendHistoriaPos(toLiquid);
+  }
   var desc=(document.getElementById('trf-desc-'+fromMedioId).value||'').trim();
   var tid='t'+(state.nextId++);
   var fecha=defaultFechaForViewedMonth();
@@ -3707,10 +3738,9 @@ window.executeTransfer=function(fromMedioId){
   state.gastos.push({id:state.nextId++,tipo:'transfer',direccion:'out',desc:desc||('→ '+to.nombre),cat:'Transferencia',mp:from.nombre,monto:monto,fecha:fecha,transferId:tid});
   state.gastos.push({id:state.nextId++,tipo:'transfer',direccion:'in',desc:desc||('← '+from.nombre),cat:'Transferencia',mp:to.nombre,monto:monto,fecha:fecha,transferId:tid});
   document.getElementById('trf-monto-'+fromMedioId).value=''; document.getElementById('trf-desc-'+fromMedioId).value='';
-  // Cerrar el form
   var box=document.getElementById('trf-form-'+fromMedioId); if(box) box.style.display='none';
-  save(); renderSaldos(); renderBitacora(); renderResumen();
-  toast('Transferido '+fmt(monto)+': '+from.nombre+' → '+to.nombre);
+  save(); renderSaldos(); renderBitacora(); renderResumen(); renderInversion();
+  toast('Transferido '+fmt(monto)+' '+fromMon+': '+from.nombre+' → '+to.nombre);
 };
 window.realizarPagoTC=function(fromMedioId){
   var from=medios.find(function(x){return x.id===fromMedioId;}); if(!from) return;
@@ -3899,7 +3929,7 @@ function renderSaldos(){
     var ptcBtn = !isCred && medios.some(function(x){return x.tipo==='Crédito';})
       ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="togglePagarTC('+m.id+')">💳 Pagar TC</button>'
       : '';
-    var trfBtn = m.tipo!=='Inversión' && medios.filter(function(x){return x.tipo!=='Inversión'&&x.id!==m.id;}).length>0
+    var trfBtn = medios.filter(function(x){return x.id!==m.id;}).length>0
       ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--purple);border-color:rgba(155,142,247,0.3)" onclick="toggleTransferForm('+m.id+')" title="Mover dinero entre cuentas propias (no cuenta como ingreso/egreso)">🔄 Transferir</button>'
       : '';
     var quick='<div style="display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">'+
@@ -3924,8 +3954,8 @@ function renderSaldos(){
       '</div>';
     }
     var trfForm='';
-    if(m.tipo!=='Inversión'){
-      var trfOpts=medios.filter(function(x){return x.tipo!=='Inversión'&&x.id!==m.id;}).map(function(x){
+    {
+      var trfOpts=medios.filter(function(x){return x.id!==m.id;}).map(function(x){
         return '<option value="'+x.id+'">'+esc(x.icono||'💳')+' '+esc(x.nombre)+' ('+esc(x.tipo)+')</option>';
       }).join('');
       trfForm='<div id="trf-form-'+m.id+'" style="display:none;align-items:center;gap:6px;margin-top:8px;padding:10px;background:var(--bg3);border:1px solid rgba(155,142,247,0.25);border-radius:8px;flex-wrap:wrap">'+
