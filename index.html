@@ -97,6 +97,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .tipo-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;letter-spacing:0.04em;text-transform:uppercase;flex-shrink:0}
 .tipo-badge.ing{background:rgba(31,209,150,0.15);color:var(--green)}
 .tipo-badge.egr{background:rgba(240,92,92,0.13);color:var(--red)}
+.tipo-badge.trf{background:rgba(155,142,247,0.15);color:var(--purple)}
 .saldo-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px}
 .saldo-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
 .saldo-name{font-size:15px;font-weight:600;letter-spacing:-0.01em}
@@ -1691,7 +1692,7 @@ function renderBitacora(){
     mc('Balance real',fmt(ingR-egrR),(ingR-egrR)<0?'red':'green','ingresos − egresos')+
     mc('Balance teórico',fmt(ingT-egrT),(ingT-egrT)<0?'red':'amber','disponible del mes');
 
-  var tipos=[{k:'Todos',l:'Todos'},{k:'ingreso',l:'Ingresos'},{k:'egreso',l:'Egresos'}];
+  var tipos=[{k:'Todos',l:'Todos'},{k:'ingreso',l:'Ingresos'},{k:'egreso',l:'Egresos'},{k:'transfer',l:'Transferencias'}];
   document.getElementById('bit-filters-tipo').innerHTML=tipos.map(function(t){
     return '<div class="chip '+(t.k===bitFilterTipo?'active':'')+'" onclick="setBitFilterTipo(\''+t.k+'\')">'+t.l+'</div>';
   }).join('');
@@ -1765,19 +1766,27 @@ function renderBitacora(){
     }
     var mpOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===g.mp?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
     var mpCol=medioColor(g.mp||'');
-    var dotCol=isIng?'#1fd196':catColor(g.cat);
-    var amtCol=isIng?'var(--green)':'var(--red)';
-    var sign=isIng?'+':'−';
-    return '<div class="bit-entry">'+
-      '<div class="cat-dot" style="background:'+dotCol+'"></div>'+
-      '<span class="tipo-badge '+(isIng?'ing':'egr')+'">'+(isIng?'ING':'EGR')+'</span>'+
-      '<div class="bit-info">'+
-        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px">'+
+    var isTrf=(t==='transfer');
+    var dotCol=isTrf?'var(--purple)':(isIng?'#1fd196':catColor(g.cat));
+    var amtCol=isTrf?'var(--purple)':(isIng?'var(--green)':'var(--red)');
+    var sign=isTrf?(g.direccion==='in'?'+':'−'):(isIng?'+':'−');
+    var badge=isTrf?'<span class="tipo-badge trf" title="Transferencia interna — no cuenta como ingreso/egreso">TRF '+(g.direccion==='in'?'↓':'↑')+'</span>':'<span class="tipo-badge '+(isIng?'ing':'egr')+'">'+(isIng?'ING':'EGR')+'</span>';
+    var infoBody=isTrf
+      ? '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px">'+
+          edt(g.desc,'max-width:240px','updGasto('+g.id+',\'desc\',this.value)')+
+          '<select class="sel-inline" style="border-color:'+mpCol+'44;color:'+mpCol+'" onchange="updGasto('+g.id+',\'mp\',this.value)">'+mpOpts+'</select>'+
+        '</div>'
+      : '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px">'+
           edt(g.desc,'max-width:200px','updGasto('+g.id+',\'desc\',this.value)')+
           '<select class="sel-inline" onchange="updGasto('+g.id+',\'cat\',this.value)">'+catOpts+'</select>'+
           subcatSel+
           '<select class="sel-inline" style="border-color:'+mpCol+'44;color:'+mpCol+'" onchange="updGasto('+g.id+',\'mp\',this.value)">'+mpOpts+'</select>'+
-        '</div>'+
+        '</div>';
+    return '<div class="bit-entry">'+
+      '<div class="cat-dot" style="background:'+dotCol+'"></div>'+
+      badge+
+      '<div class="bit-info">'+
+        infoBody+
         '<div class="bit-meta">'+fmtDate(g.fecha)+'</div>'+
       '</div>'+
       edtNum(g.monto,'updGasto('+g.id+',\'monto\',this.value)')+
@@ -2719,17 +2728,24 @@ function snapshotAtMonthEnd(month){
   var ini=month.data.saldosIniciales||{};
   var gastos=month.data.gastos||[];
   var perMp={};
-  gastos.forEach(function(g){ if(!g.mp) return; if(!perMp[g.mp]) perMp[g.mp]={ing:0,egr:0}; if((g.tipo||'egreso')==='ingreso') perMp[g.mp].ing+=g.monto; else perMp[g.mp].egr+=g.monto; });
+  gastos.forEach(function(g){
+    if(!g.mp) return;
+    if(!perMp[g.mp]) perMp[g.mp]={ing:0,egr:0,trfIn:0,trfOut:0};
+    if(g.tipo==='transfer'){
+      if(g.direccion==='in') perMp[g.mp].trfIn+=g.monto; else perMp[g.mp].trfOut+=g.monto;
+    } else if((g.tipo||'egreso')==='ingreso') perMp[g.mp].ing+=g.monto;
+    else perMp[g.mp].egr+=g.monto;
+  });
   var liquid=0, deuda=0, inv=0;
   medios.forEach(function(m){
     if(m.tipo==='Inversión'){
       (m.posiciones||[]).forEach(function(p){ inv+=valorPosAtDate(p,endDate); });
       return;
     }
-    var mv=perMp[m.nombre]||{ing:0,egr:0};
+    var mv=perMp[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0};
     var iniBal=ini[m.nombre]||0;
-    if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr-mv.ing,0);
-    else liquid+=iniBal+mv.ing-mv.egr;
+    if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr+mv.trfOut-mv.ing-mv.trfIn,0);
+    else liquid+=iniBal+mv.ing+mv.trfIn-mv.egr-mv.trfOut;
   });
   return {date:isoDate(endDate),liquid:liquid,deuda:deuda,inversion:inv,patrimonio:liquid+inv-deuda,
     ingresoMes:gastos.filter(function(g){return (g.tipo||'egreso')==='ingreso';}).reduce(function(a,g){return a+g.monto;},0),
@@ -2818,17 +2834,19 @@ function buildPatrimonioSeriesDaily(months){
       gastos.forEach(function(g){
         if(!g.fecha||g.fecha>dStr) return;
         if(!g.mp) return;
-        if(!perMp[g.mp]) perMp[g.mp]={ing:0,egr:0};
-        if((g.tipo||'egreso')==='ingreso') perMp[g.mp].ing+=g.monto;
+        if(!perMp[g.mp]) perMp[g.mp]={ing:0,egr:0,trfIn:0,trfOut:0};
+        if(g.tipo==='transfer'){
+          if(g.direccion==='in') perMp[g.mp].trfIn+=g.monto; else perMp[g.mp].trfOut+=g.monto;
+        } else if((g.tipo||'egreso')==='ingreso') perMp[g.mp].ing+=g.monto;
         else perMp[g.mp].egr+=g.monto;
       });
       var liq=0, deuda=0, inv=0;
       medios.forEach(function(m){
         if(m.tipo==='Inversión'){ (m.posiciones||[]).forEach(function(p){ inv+=valorPosAtDate(p,d); }); return; }
         var iniBal=ini[m.nombre]||0;
-        var mv=perMp[m.nombre]||{ing:0,egr:0};
-        if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr-mv.ing,0);
-        else liq+=iniBal+mv.ing-mv.egr;
+        var mv=perMp[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0};
+        if(m.tipo==='Crédito') deuda+=Math.max(iniBal+mv.egr+mv.trfOut-mv.ing-mv.trfIn,0);
+        else liq+=iniBal+mv.ing+mv.trfIn-mv.egr-mv.trfOut;
       });
       var emp=empresas.reduce(function(a,e){return a+valorEmpresaAtDate(e,d);},0);
       var fis=fisicos.reduce(function(a,f){return a+valorFisicoAtDate(f,d);},0);
@@ -3302,13 +3320,20 @@ function computeCategoriaTotals(){
   }
   var saldosIni=sourceData.saldosIniciales||{};
   var mov={};
-  (sourceData.gastos||[]).forEach(function(g){ if(!g.mp) return; if(!mov[g.mp]) mov[g.mp]={ing:0,egr:0}; if((g.tipo||'egreso')==='ingreso') mov[g.mp].ing+=g.monto; else mov[g.mp].egr+=g.monto; });
+  (sourceData.gastos||[]).forEach(function(g){
+    if(!g.mp) return;
+    if(!mov[g.mp]) mov[g.mp]={ing:0,egr:0,trfIn:0,trfOut:0};
+    if(g.tipo==='transfer'){
+      if(g.direccion==='in') mov[g.mp].trfIn+=g.monto; else mov[g.mp].trfOut+=g.monto;
+    } else if((g.tipo||'egreso')==='ingreso') mov[g.mp].ing+=g.monto;
+    else mov[g.mp].egr+=g.monto;
+  });
   medios.forEach(function(m){
     if(m.tipo==='Inversión'){ (m.posiciones||[]).forEach(function(p){ inv+=valorPos(p); }); return; }
     var ini=saldosIni[m.nombre]||0;
-    var mv=mov[m.nombre]||{ing:0,egr:0};
-    if(m.tipo==='Crédito') deuda+=Math.max(ini+mv.egr-mv.ing,0);
-    else liquido+=ini+mv.ing-mv.egr;
+    var mv=mov[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0};
+    if(m.tipo==='Crédito') deuda+=Math.max(ini+mv.egr+mv.trfOut-mv.ing-mv.trfIn,0);
+    else liquido+=ini+mv.ing+mv.trfIn-mv.egr-mv.trfOut;
   });
   var emp=totalEmpresasMxn();
   var fis=totalFisicosMxn();
@@ -3663,6 +3688,30 @@ window.togglePagarTC=function(medioId){
   var box=document.getElementById('ptc-form-'+medioId); if(!box) return;
   box.style.display=box.style.display==='none'?'flex':'none';
 };
+window.toggleTransferForm=function(medioId){
+  var box=document.getElementById('trf-form-'+medioId); if(!box) return;
+  box.style.display=box.style.display==='none'?'flex':'none';
+};
+window.executeTransfer=function(fromMedioId){
+  var from=medios.find(function(x){return x.id===fromMedioId;}); if(!from) return;
+  var toId=parseInt(document.getElementById('trf-to-'+fromMedioId).value,10);
+  var to=medios.find(function(x){return x.id===toId;});
+  if(!to){ toast('Selecciona destino',true); return; }
+  if(to.id===from.id){ toast('Origen y destino iguales',true); return; }
+  var monto=parseFloat(document.getElementById('trf-monto-'+fromMedioId).value)||0;
+  if(!monto){ toast('Falta el monto',true); return; }
+  var desc=(document.getElementById('trf-desc-'+fromMedioId).value||'').trim();
+  var tid='t'+(state.nextId++);
+  var fecha=defaultFechaForViewedMonth();
+  if(!state.gastos) state.gastos=[];
+  state.gastos.push({id:state.nextId++,tipo:'transfer',direccion:'out',desc:desc||('→ '+to.nombre),cat:'Transferencia',mp:from.nombre,monto:monto,fecha:fecha,transferId:tid});
+  state.gastos.push({id:state.nextId++,tipo:'transfer',direccion:'in',desc:desc||('← '+from.nombre),cat:'Transferencia',mp:to.nombre,monto:monto,fecha:fecha,transferId:tid});
+  document.getElementById('trf-monto-'+fromMedioId).value=''; document.getElementById('trf-desc-'+fromMedioId).value='';
+  // Cerrar el form
+  var box=document.getElementById('trf-form-'+fromMedioId); if(box) box.style.display='none';
+  save(); renderSaldos(); renderBitacora(); renderResumen();
+  toast('Transferido '+fmt(monto)+': '+from.nombre+' → '+to.nombre);
+};
 window.realizarPagoTC=function(fromMedioId){
   var from=medios.find(function(x){return x.id===fromMedioId;}); if(!from) return;
   var toId=parseInt(document.getElementById('ptc-to-'+fromMedioId).value,10);
@@ -3713,17 +3762,24 @@ function saldoTcAtDate(mpName, dateRef){
   (sourceData.gastos||[]).forEach(function(g){
     if(g.mp!==mpName) return;
     if(!g.fecha || g.fecha>dateStr) return;
-    if((g.tipo||'egreso')==='ingreso') ing+=g.monto;
+    if(g.tipo==='transfer'){
+      if(g.direccion==='in') ing+=g.monto; else egr+=g.monto;
+    } else if((g.tipo||'egreso')==='ingreso') ing+=g.monto;
     else egr+=g.monto;
   });
   return ini+egr-ing;
 }
+function gIsOutflow(g){ if(g.tipo==='transfer') return g.direccion==='out'; return (g.tipo||'egreso')==='egreso'; }
+function gIsInflow(g){ if(g.tipo==='transfer') return g.direccion==='in'; return (g.tipo||'egreso')==='ingreso'; }
 function movByMp(){
   var m={};
   (state.gastos||[]).forEach(function(g){
     var mp=g.mp; if(!mp) return;
-    if(!m[mp]) m[mp]={ing:0,egr:0};
-    if(gTipo(g)==='ingreso') m[mp].ing+=g.monto; else m[mp].egr+=g.monto;
+    if(!m[mp]) m[mp]={ing:0,egr:0,trfIn:0,trfOut:0};
+    if(g.tipo==='transfer'){
+      if(g.direccion==='in') m[mp].trfIn+=g.monto; else m[mp].trfOut+=g.monto;
+    } else if(gTipo(g)==='ingreso') m[mp].ing+=g.monto;
+    else m[mp].egr+=g.monto;
   });
   return m;
 }
@@ -3786,8 +3842,8 @@ function renderSaldos(){
     if(isCred){
       var linea=m.lineaCredito||0;
       var deudaIni=saldosIni[m.nombre]||0;
-      var cargos=mv.egr, abonos=mv.ing;
-      var aPagar=deudaIni+cargos-abonos;
+      var cargos=mv.egr, abonos=mv.ing+(mv.trfIn||0);
+      var aPagar=deudaIni+cargos-abonos+(mv.trfOut||0);
       var disp=linea-aPagar;
       var pctU=linea>0?Math.round(aPagar/linea*100):0;
       var pctCls=pctU>=100?'over':pctU>=80?'warn':'';
@@ -3827,12 +3883,15 @@ function renderSaldos(){
       footer='<div style="margin-top:8px"><button class="btn" style="padding:5px 12px;font-size:11px" onclick="nav(\'inversion\')">Ver detalles en Inversión →</button></div>';
     } else {
       var ini=saldosIni[m.nombre]||0;
-      var saldoFinal=ini+mv.ing-mv.egr;
+      var trfNet=(mv.trfIn||0)-(mv.trfOut||0);
+      var saldoFinal=ini+mv.ing-mv.egr+trfNet;
+      var trfStat=(mv.trfIn||mv.trfOut)?saldoStat('Transferencias',(trfNet>=0?'+':'')+fmt(trfNet),trfNet>=0?'green':'red'):'';
       statsHtml=
         '<div class="saldo-stat"><div class="saldo-stat-lbl">Saldo inicial</div>'+
           '<input type="number" value="'+ini+'" step="0.01" onchange="setSaldoInicial(\''+esc(m.nombre)+'\',this.value)"></div>'+
         saldoStat('+ Ingresos',fmt(mv.ing),'green')+
         saldoStat('− Egresos',fmt(mv.egr),'red')+
+        trfStat+
         saldoStat('Saldo actual',fmt(saldoFinal),saldoFinal<0?'red':'green');
     }
     var lblEgr=isCred?'+ Cargo':'+ Egreso';
@@ -3840,12 +3899,16 @@ function renderSaldos(){
     var ptcBtn = !isCred && medios.some(function(x){return x.tipo==='Crédito';})
       ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="togglePagarTC('+m.id+')">💳 Pagar TC</button>'
       : '';
+    var trfBtn = m.tipo!=='Inversión' && medios.filter(function(x){return x.tipo!=='Inversión'&&x.id!==m.id;}).length>0
+      ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--purple);border-color:rgba(155,142,247,0.3)" onclick="toggleTransferForm('+m.id+')" title="Mover dinero entre cuentas propias (no cuenta como ingreso/egreso)">🔄 Transferir</button>'
+      : '';
     var quick='<div style="display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">'+
       '<input id="quick-desc-'+m.id+'" type="text" placeholder="Descripción" style="flex:2;min-width:120px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--font);outline:none">'+
       '<input id="quick-monto-'+m.id+'" type="number" placeholder="Monto" min="0" step="0.01" style="width:90px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
       '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--red);border-color:rgba(240,92,92,0.3)" onclick="quickAddMov('+m.id+',\'egreso\')">'+lblEgr+'</button>'+
       '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="quickAddMov('+m.id+',\'ingreso\')">'+lblIng+'</button>'+
       ptcBtn+
+      trfBtn+
       '</div>';
     var ptcForm='';
     if(!isCred){
@@ -3858,6 +3921,20 @@ function renderSaldos(){
         '<input id="ptc-monto-'+m.id+'" type="number" placeholder="Monto" min="0" step="0.01" style="width:100px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
         '<button class="btn btn-green" style="padding:5px 12px;font-size:11px" onclick="realizarPagoTC('+m.id+')">Realizar pago</button>'+
         '<button class="btn" style="padding:5px 10px;font-size:11px" onclick="togglePagarTC('+m.id+')">Cancelar</button>'+
+      '</div>';
+    }
+    var trfForm='';
+    if(m.tipo!=='Inversión'){
+      var trfOpts=medios.filter(function(x){return x.tipo!=='Inversión'&&x.id!==m.id;}).map(function(x){
+        return '<option value="'+x.id+'">'+esc(x.icono||'💳')+' '+esc(x.nombre)+' ('+esc(x.tipo)+')</option>';
+      }).join('');
+      trfForm='<div id="trf-form-'+m.id+'" style="display:none;align-items:center;gap:6px;margin-top:8px;padding:10px;background:var(--bg3);border:1px solid rgba(155,142,247,0.25);border-radius:8px;flex-wrap:wrap">'+
+        '<span style="font-size:11px;color:var(--text3)">Mover →</span>'+
+        '<select id="trf-to-'+m.id+'" class="sel-inline" style="font-size:12px">'+(trfOpts||'<option value="">— sin destino —</option>')+'</select>'+
+        '<input id="trf-monto-'+m.id+'" type="number" placeholder="Monto" min="0" step="0.01" style="width:100px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;font-family:var(--mono);outline:none;text-align:right">'+
+        '<input id="trf-desc-'+m.id+'" type="text" placeholder="Descripción (opcional)" style="flex:1;min-width:120px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:12px;outline:none">'+
+        '<button class="btn btn-green" style="padding:5px 12px;font-size:11px" onclick="executeTransfer('+m.id+')">Transferir</button>'+
+        '<button class="btn" style="padding:5px 10px;font-size:11px" onclick="toggleTransferForm('+m.id+')">Cancelar</button>'+
       '</div>';
     }
     var msiSection='';
@@ -3924,7 +4001,7 @@ function renderSaldos(){
         }).join(''):'<div style="text-align:center;color:var(--text3);padding:14px;font-size:12px">Sin movimientos en este mes</div>')+
       '</div>';
     }
-    return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+statsHtml+'</div>'+footer+quick+ptcForm+msiSection+movToggle+movList+'</div>';
+    return '<div class="saldo-card">'+head+'<div class="saldo-grid">'+statsHtml+'</div>'+footer+quick+ptcForm+trfForm+msiSection+movToggle+movList+'</div>';
   }).join('');
   document.getElementById('saldos-list').innerHTML=html||'<div class="empty">Sin medios de pago configurados. Ve a Medios de Pago para agregar.</div>';
 }
