@@ -3955,13 +3955,15 @@ function renderSaldos(){
       ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="togglePagarTC('+m.id+')">💳 Pagar TC</button>'
       : '';
     function _isValidTrfPos(p){ return p.liquid===true || p.subtipo==='PF' || p.subtipo==='TF' || p.subtipo==='RV'; }
-    var validTrfDestinations=medios.filter(function(x){
+    var hasOtherMedioDestination=medios.some(function(x){
       if(x.id===m.id) return false;
       if(x.tipo==='Inversión') return (x.posiciones||[]).some(_isValidTrfPos);
       return true;
     });
+    // Si la cuenta es Inversión y tiene 2+ posiciones válidas, también puede transferir entre ellas
+    var hasInternalDestination=m.tipo==='Inversión' && (m.posiciones||[]).filter(_isValidTrfPos).length>=2;
     var srcCanTransfer=m.tipo!=='Inversión' || (m.posiciones||[]).some(_isValidTrfPos);
-    var trfBtn = (validTrfDestinations.length>0 && srcCanTransfer)
+    var trfBtn = ((hasOtherMedioDestination||hasInternalDestination) && srcCanTransfer)
       ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--purple);border-color:rgba(155,142,247,0.3)" onclick="toggleTransferForm('+m.id+')" title="Mover dinero entre cuentas propias (no cuenta como ingreso/egreso)">🔄 Transferir</button>'
       : '';
     var quick='<div style="display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">'+
@@ -3987,10 +3989,12 @@ function renderSaldos(){
     }
     var trfForm='';
     if(trfBtn){
-      // Construir opciones de destino: para Inversión, una opción por posición válida
+      // Construir opciones de destino: para Inversión, una opción por posición válida.
+      // Si la cuenta actual también es Inversión, incluye sus otras posiciones (no la misma).
       var trfOpts=[];
       medios.forEach(function(x){
-        if(x.id===m.id) return;
+        // Si es la misma cuenta y NO es Inversión, no puede ser destino de sí misma
+        if(x.id===m.id && m.tipo!=='Inversión') return;
         if(x.tipo==='Inversión'){
           (x.posiciones||[]).filter(_isValidTrfPos).forEach(function(p){
             var subLbl=(SUBTIPOS_INV[p.subtipo]||{label:p.subtipo}).label;
