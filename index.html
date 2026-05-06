@@ -2744,7 +2744,8 @@ function valorEmpresaAtDate(e, d){
   var hist=e.historia||[];
   var best=null;
   for(var i=0;i<hist.length;i++){
-    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>best.fecha) best=hist[i]; }
+    // Si hay múltiples entries del mismo día, gana la más reciente (orden de inserción)
+    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>=best.fecha) best=hist[i]; }
   }
   // Si lastUpdate es más reciente que best y ≤ d, el saldo actual es la verdad para d
   // (cubre el caso de actualización externa sin entrada en historia)
@@ -2772,7 +2773,7 @@ function valorFisicoAtDate(f, d){
   var hist=f.historia||[];
   var best=null;
   for(var i=0;i<hist.length;i++){
-    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>best.fecha) best=hist[i]; }
+    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>=best.fecha) best=hist[i]; }
   }
   // Misma lógica: si lastUpdate es más reciente, anclar al valor actual
   var anchorDate, anchorVal;
@@ -3033,8 +3034,29 @@ function setupEmpresasListener(){
       if(!snap.exists()) return;
       var newList=snap.data().list||[];
       if(JSON.stringify(empresas)===JSON.stringify(newList)) return;
+      // Merge historia: preserva la log local y appendea snapshot si el saldo cambió
+      var nowIso=new Date().toISOString();
+      var anyAppended=false;
+      newList.forEach(function(newE){
+        var oldE=empresas.find(function(x){return x.id===newE.id;});
+        var preservedHist=oldE && Array.isArray(oldE.historia)?oldE.historia.slice():[];
+        var externalHist=Array.isArray(newE.historia)?newE.historia:null;
+        var hist=preservedHist;
+        if(externalHist && externalHist.length>preservedHist.length) hist=externalHist.slice();
+        if(typeof newE.saldo==='number'){
+          var lastEntry=hist.length?hist[hist.length-1]:null;
+          var lastSaldo=lastEntry?lastEntry.saldo:null;
+          if(lastSaldo===null || Math.abs(newE.saldo-lastSaldo)>0.005){
+            hist.push({fecha:nowIso.slice(0,10),ts:nowIso,saldo:newE.saldo});
+            anyAppended=true;
+          }
+        }
+        newE.historia=hist;
+      });
       empresas=newList;
-      globalCache=null; // invalidar cache para que las gráficas se reconstruyan con los nuevos saldos
+      globalCache=null;
+      // Persist merged history back so future loads tienen el log completo
+      if(anyAppended){ save(false,true); }
       var sec=document.getElementById('s-global');
       if(sec && sec.classList.contains('active')) renderGlobal();
     });
@@ -3137,8 +3159,27 @@ function setupFisicosListener(){
       if(!snap.exists()) return;
       var newList=snap.data().list||[];
       if(JSON.stringify(fisicos)===JSON.stringify(newList)) return;
+      var nowIso=new Date().toISOString();
+      var anyAppended=false;
+      newList.forEach(function(newF){
+        var oldF=fisicos.find(function(x){return x.id===newF.id;});
+        var preservedHist=oldF && Array.isArray(oldF.historia)?oldF.historia.slice():[];
+        var externalHist=Array.isArray(newF.historia)?newF.historia:null;
+        var hist=preservedHist;
+        if(externalHist && externalHist.length>preservedHist.length) hist=externalHist.slice();
+        if(typeof newF.valor==='number'){
+          var lastEntry=hist.length?hist[hist.length-1]:null;
+          var lastVal=lastEntry?lastEntry.valor:null;
+          if(lastVal===null || Math.abs(newF.valor-lastVal)>0.005){
+            hist.push({fecha:nowIso.slice(0,10),ts:nowIso,valor:newF.valor});
+            anyAppended=true;
+          }
+        }
+        newF.historia=hist;
+      });
       fisicos=newList;
       globalCache=null;
+      if(anyAppended){ save(false,true); }
       var sec=document.getElementById('s-global');
       if(sec && sec.classList.contains('active')) renderGlobal();
     });
