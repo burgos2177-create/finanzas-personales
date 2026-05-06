@@ -725,6 +725,7 @@ var MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Se
 var DIST_COLORS=['#1fd196','#5b9cf6','#f5a524','#f05c5c','#9b8ef7','#e879a8','#50c8f0','#a8d76b'];
 var TIPO_ICONS={Débito:'💳',Crédito:'💎',Efectivo:'💵',Digital:'📱',Apartado:'🏦','Inversión':'📈'};
 var INGRESO_OTROS=['Pago TC','Transferencia','Reembolso','Ajuste','Otro'];
+var CRYPTO_IDS={BTC:'bitcoin',ETH:'ethereum',USDT:'tether',BNB:'binancecoin',SOL:'solana',USDC:'usd-coin',XRP:'ripple',ADA:'cardano',DOGE:'dogecoin',AVAX:'avalanche-2',TRX:'tron',LINK:'chainlink',MATIC:'matic-network',POL:'polygon-ecosystem-token',DOT:'polkadot',LTC:'litecoin',BCH:'bitcoin-cash',UNI:'uniswap',NEAR:'near',XLM:'stellar',ICP:'internet-computer',ETC:'ethereum-classic',FIL:'filecoin',ATOM:'cosmos',HBAR:'hedera-hashgraph',PEPE:'pepe',APT:'aptos',ARB:'arbitrum',OP:'optimism',SUI:'sui',SHIB:'shiba-inu',DAI:'dai',MNT:'mantle',VET:'vechain',TAO:'bittensor',TIA:'celestia'};
 var SUBTIPOS_INV={
   PF:{label:'Plazo fijo',icon:'🏦',color:'#5b9cf6'},
   TF:{label:'Tasa fija flexible',icon:'💰',color:'#50c8f0'},
@@ -2120,6 +2121,81 @@ window.addPosicion=function(medioId){
   save(); renderInversion(); renderSaldos(); renderResumen();
   toast('Posición agregada');
 };
+// ── Fetch de precios en vivo ──
+async function fetchUsdMxn(){
+  try {
+    var r=await fetch('https://api.frankfurter.app/latest?from=USD&to=MXN');
+    var d=await r.json();
+    return d && d.rates && d.rates.MXN ? d.rates.MXN : null;
+  } catch(e){ console.error('fx',e); return null; }
+}
+async function fetchStockPrice(ticker){
+  if(!ticker) return null;
+  var t=ticker.trim().toUpperCase();
+  try {
+    var url='https://corsproxy.io/?url='+encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t);
+    var r=await fetch(url);
+    if(!r.ok) return null;
+    var d=await r.json();
+    if(d && d.chart && d.chart.result && d.chart.result[0] && d.chart.result[0].meta){
+      return d.chart.result[0].meta.regularMarketPrice||null;
+    }
+    return null;
+  } catch(e){ console.error('stock '+t,e); return null; }
+}
+async function fetchCryptoPrices(symbols){
+  if(!symbols.length) return {};
+  var ids=symbols.map(function(s){return CRYPTO_IDS[s.toUpperCase()]||s.toLowerCase();});
+  var unique=Array.from(new Set(ids));
+  try {
+    var r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+unique.join(',')+'&vs_currencies=usd');
+    var d=await r.json();
+    var out={};
+    symbols.forEach(function(s){
+      var id=CRYPTO_IDS[s.toUpperCase()]||s.toLowerCase();
+      if(d[id] && typeof d[id].usd!=='undefined') out[s.toUpperCase()]=d[id].usd;
+    });
+    return out;
+  } catch(e){ console.error('crypto',e); return {}; }
+}
+window.refreshInvPrices=async function(medioId,btnEl){
+  var m=medios.find(function(x){return x.id===medioId;});
+  if(!m||m.tipo!=='Inversión') return;
+  var positions=m.posiciones||[];
+  if(btnEl){ btnEl.disabled=true; btnEl.textContent='⏳ Cargando…'; }
+  // 1) USD/MXN
+  var rate=await fetchUsdMxn();
+  if(rate){ globalConfig.usdRate=Math.round(rate*10000)/10000; }
+  // 2) Crypto en batch
+  var cryptoSymbols=positions.filter(function(p){return p.subtipo==='Cripto'&&p.simbolo;}).map(function(p){return p.simbolo;});
+  var cryptoPrices=cryptoSymbols.length?await fetchCryptoPrices(cryptoSymbols):{};
+  // 3) Stocks individuales
+  var updated=0, failed=[];
+  for(var i=0;i<positions.length;i++){
+    var p=positions[i];
+    if(p.subtipo==='Acciones' && p.ticker){
+      var price=await fetchStockPrice(p.ticker);
+      if(price!==null && !isNaN(price)){
+        var oldV=valorPos(p);
+        p.precioActual=Math.round(price*10000)/10000;
+        if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p);
+        updated++;
+      } else { failed.push(p.ticker); }
+    } else if(p.subtipo==='Cripto' && p.simbolo){
+      var price2=cryptoPrices[p.simbolo.toUpperCase()];
+      if(typeof price2==='number'){
+        var oldV2=valorPos(p);
+        p.precioActual=Math.round(price2*100000000)/100000000;
+        if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p);
+        updated++;
+      } else { failed.push(p.simbolo); }
+    }
+  }
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  if(failed.length) toast('Actualizadas '+updated+' · sin datos: '+failed.join(', '), failed.length>updated);
+  else toast('Actualizadas '+updated+' posiciones'+(rate?' (USD '+globalConfig.usdRate+')':''));
+};
+
 window.updPos=function(medioId,posId,f,v){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
   var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
@@ -3330,12 +3406,17 @@ function renderInversion(){
     var posiciones=m.posiciones||[];
     var aport=aportadoInv(m), actual=valorInversion(m), gan=actual-aport;
     var pctI=aport>0?Math.round(gan/aport*10000)/100:0;
+    var hasFetchable=posiciones.some(function(p){return (p.subtipo==='Acciones'&&p.ticker)||(p.subtipo==='Cripto'&&p.simbolo);});
+    var refreshBtn=hasFetchable
+      ? '<button class="btn" style="padding:5px 11px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="refreshInvPrices('+m.id+',this)" title="Obtener precios en vivo y USD/MXN">🔄 Precios</button>'
+      : '';
     var head='<div class="inv-head">'+
       '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+';width:44px;height:44px;border-radius:10px;font-size:20px">'+(m.icono||'📈')+'</div>'+
       '<div style="flex:1;min-width:0">'+
         '<div class="inv-name" style="color:'+m.color+'">'+esc(m.nombre)+'<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;background:var(--bg3);color:var(--text3)">'+posiciones.length+' '+(posiciones.length===1?'posición':'posiciones')+'</span></div>'+
         '<div class="inv-sub">Aportado '+fmt(aport)+' · Actual <span style="color:'+(gan>=0?'var(--green)':'var(--red)')+';font-weight:500">'+fmt(actual)+'</span> · '+(gan>=0?'+':'')+fmt(gan)+' ('+(pctI>=0?'+':'')+pctI+'%)</div>'+
       '</div>'+
+      refreshBtn+
       '<button class="btn-del" onclick="delMedio('+m.id+')">✕</button>'+
     '</div>';
 
