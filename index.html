@@ -2291,6 +2291,28 @@ function renderInvHistModal(){
   if(dates.length && isoDate(dates[dates.length-1])!==isoDate(today)) dates.push(new Date(today));
   var useShort=['1y','2y','5y','all'].indexOf(invHistRange)>=0;
   var labels=dates.map(function(d){var p=isoDate(d).split('-'); return useShort?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);});
+  // ─── HACK TEMPORAL: aplanar puntos previos al 2026-05-04 ────
+  // El usuario configuró todo el portafolio en esa fecha; antes los
+  // valores de historia son los iniciales (aportado), creando saltos
+  // absurdos en el chart. Igualamos los días previos al valor que
+  // tenían el 2026-05-04 para que se vean estables.
+  var FLATTEN_BEFORE_INV='2026-05-04';
+  var flattenIdx=-1;
+  for(var k=0;k<dates.length;k++){
+    if(isoDate(dates[k])>=FLATTEN_BEFORE_INV){ flattenIdx=k; break; }
+  }
+  // Pre-calcular series por posición (todas, no solo visibles, para
+  // que totales y insights compartan los mismos números aplanados)
+  var positionData={};
+  positions.forEach(function(p){
+    var arr=dates.map(function(dd){return valorPosAtDate(p,dd);});
+    if(flattenIdx>0){
+      var anchor=arr[flattenIdx];
+      for(var j=0;j<flattenIdx;j++) arr[j]=anchor;
+    }
+    positionData[p.id]=arr;
+  });
+  // ─── FIN HACK ────────────────────────────────────────────────
   // Datasets per visible position
   var datasets=[];
   positions.forEach(function(p,i){
@@ -2298,7 +2320,7 @@ function renderInvHistModal(){
     var col=colorForPos(p,i);
     datasets.push({
       label:p.nombre||(SUBTIPOS_INV[p.subtipo]||{label:p.subtipo}).label,
-      data:dates.map(function(dd){return valorPosAtDate(p,dd);}),
+      data:positionData[p.id],
       borderColor:col,backgroundColor:col+'15',
       fill:false,tension:0.25,pointRadius:dates.length<60?2:0,pointHoverRadius:4,borderWidth:2
     });
@@ -2307,10 +2329,11 @@ function renderInvHistModal(){
   var ctx=document.getElementById('inv-hist-chart');
   if(ctx) invHistChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:datasets.length>1,position:'top',labels:{color:'#8b90a0',font:{size:10},boxWidth:10,padding:6}},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var d=dates[i]; if(!d) return ''; return isoDate(d).split('-').reverse().join('/');},label:function(c){return c.dataset.label+': '+fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e'},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:12},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
 
-  // Summary cards (cuenta totales en el periodo)
+  // Summary cards (cuenta totales en el periodo) — usar positionData para reflejar el flatten
   var firstDate=dates[0], lastDate=dates[dates.length-1];
-  var totFirst=positions.reduce(function(a,p){return a+valorPosAtDate(p,firstDate);},0);
-  var totLast=positions.reduce(function(a,p){return a+valorPosAtDate(p,lastDate);},0);
+  var lastIdx=dates.length-1;
+  var totFirst=positions.reduce(function(a,p){return a+(positionData[p.id][0]||0);},0);
+  var totLast=positions.reduce(function(a,p){return a+(positionData[p.id][lastIdx]||0);},0);
   var aportTot=positions.reduce(function(a,p){return a+aportadoPos(p);},0);
   var ganTot=totLast-aportTot;
   var deltaPeriod=totLast-totFirst;
@@ -2325,8 +2348,8 @@ function renderInvHistModal(){
   var insights=[];
   // Mejor / peor del periodo
   var perfPos=positions.map(function(p){
-    var firstV=valorPosAtDate(p,firstDate);
-    var lastV=valorPosAtDate(p,lastDate);
+    var firstV=positionData[p.id][0]||0;
+    var lastV=positionData[p.id][lastIdx]||0;
     var delta=lastV-firstV;
     var pct=firstV>0?delta/firstV*100:0;
     return {p:p,delta:delta,pct:pct,first:firstV,last:lastV};
