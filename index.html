@@ -196,11 +196,36 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 #toast.show{opacity:1;transform:translateY(0)}
 #toast.err{border-color:var(--red);color:var(--red)}
 @media(max-width:700px){
-  .sidebar{display:none}.content{padding:16px}
+  .sidebar{display:block;position:fixed;top:0;left:0;height:100vh;width:240px;z-index:200;transform:translateX(-100%);transition:transform 0.25s ease;box-shadow:0 0 30px rgba(0,0,0,0.6)}
+  .sidebar.open{transform:translateX(0)}
+  .content{padding:16px}
   .two-col{grid-template-columns:1fr}.fg{grid-template-columns:1fr}
   .fg3,.fg4,.fg5,.fg6{grid-template-columns:1fr 1fr}
   .hright{gap:6px}
+  .header{padding:10px 12px;gap:8px}
+  .htitle{font-size:13px}
+  .hsub{font-size:10px}
+  .user-pill .btn-signout{display:none}
+  .user-pill .user-avatar{width:18px;height:18px}
+  .user-pill #user-name{max-width:60px;font-size:11px}
+  #sync-label{display:none}
+  #sync-bar{padding:4px 6px}
 }
+.hamburger{display:none;align-items:center;justify-content:center;width:34px;height:34px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:18px;color:var(--text);flex-shrink:0;padding:0;line-height:1}
+@media(max-width:700px){.hamburger{display:flex}}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:199}
+.sidebar-overlay.open{display:block}
+.quick-fab{display:flex;align-items:center;justify-content:center;width:34px;height:34px;background:var(--green2);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:22px;font-weight:600;flex-shrink:0;transition:background 0.15s;line-height:1;padding:0}
+.quick-fab:hover{background:var(--green)}
+.quick-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:300;padding:16px;overflow-y:auto}
+.quick-modal.open{display:flex;align-items:flex-start;justify-content:center}
+.quick-modal-inner{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px;max-width:480px;width:100%;margin-top:30px;margin-bottom:30px}
+.quick-modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.quick-modal-title{font-size:15px;font-weight:600;letter-spacing:-0.01em}
+.quick-modal-close{background:none;border:none;color:var(--text3);cursor:pointer;font-size:18px;padding:4px 10px;border-radius:6px}
+.quick-modal-close:hover{color:var(--red);background:var(--bg3)}
+.quick-modal .field{margin-bottom:11px}
+.quick-modal .field input,.quick-modal .field select{padding:10px 12px;font-size:14px}
 </style>
 </head>
 <body>
@@ -228,6 +253,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <!-- App -->
 <div id="app" style="display:none">
   <div class="header">
+    <button class="hamburger" onclick="toggleSidebar()" title="Menú">☰</button>
     <div class="hbrand">
       <div class="hicon">💰</div>
       <div>
@@ -247,6 +273,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <option selected>2026</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option><option>2031</option><option>2032</option><option>2033</option><option>2034</option><option>2035</option><option>2036</option><option>2037</option><option>2038</option><option>2039</option><option>2040</option>
         </select>
       </div>
+      <button class="quick-fab" onclick="toggleQuickEntry()" title="Entrada rápida">+</button>
       <div id="sync-bar"><div id="sync-dot"></div><span id="sync-label">Sincronizado</span></div>
       <div class="user-pill">
         <img id="user-avatar" class="user-avatar" src="" alt="" style="display:none">
@@ -602,6 +629,32 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       </div>
 
     </main>
+  </div>
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+  <div id="quick-modal" class="quick-modal" onclick="if(event.target===this)toggleQuickEntry()">
+    <div class="quick-modal-inner">
+      <div class="quick-modal-head">
+        <div class="quick-modal-title">⚡ Entrada rápida</div>
+        <button onclick="toggleQuickEntry()" class="quick-modal-close">✕</button>
+      </div>
+      <div class="field"><label>Tipo</label>
+        <select id="qe-tipo" onchange="syncQuickEntry()">
+          <option value="egreso">Egreso</option>
+          <option value="ingreso">Ingreso</option>
+        </select>
+      </div>
+      <div class="field"><label>Descripción</label><input id="qe-desc" type="text" placeholder="Ej. Cena restaurante"></div>
+      <div class="field"><label id="qe-cat-lbl">Categoría</label>
+        <select id="qe-cat" onchange="syncQuickSubcat()"></select>
+      </div>
+      <div class="field" id="qe-subcat-wrap"><label>Subcategoría</label>
+        <select id="qe-subcat"></select>
+      </div>
+      <div class="field"><label>Medio de pago</label><select id="qe-mp"></select></div>
+      <div class="field"><label>Monto ($)</label><input id="qe-monto" type="number" step="0.01" placeholder="0" inputmode="decimal"></div>
+      <div class="field"><label>Fecha</label><input id="qe-fecha" type="date"></div>
+      <button class="btn btn-green" onclick="quickEntrySubmit()" style="width:100%;margin-top:10px;padding:12px;font-size:14px">+ Registrar</button>
+    </div>
   </div>
 </div>
 
@@ -1001,7 +1054,76 @@ function nav(name){
   ({resumen:renderResumen,saldos:renderSaldos,semanal:renderSemanal,global:renderGlobal,proyeccion:renderProyeccion,inversion:renderInversion,ingresos:renderIngresos,egresos:renderEgresos,
     distribucion:renderDist,bitacora:renderBitacora,medios:renderMedios,
     suscripciones:renderSubs,categorias:renderCats}[name]||function(){})();
+  // Close mobile sidebar after nav
+  var sb=document.querySelector('.sidebar'); if(sb) sb.classList.remove('open');
+  var ov=document.getElementById('sidebar-overlay'); if(ov) ov.classList.remove('open');
 }
+window.toggleSidebar=function(){
+  var sb=document.querySelector('.sidebar'); var ov=document.getElementById('sidebar-overlay');
+  if(!sb||!ov) return;
+  sb.classList.toggle('open'); ov.classList.toggle('open');
+};
+window.toggleQuickEntry=function(){
+  var modal=document.getElementById('quick-modal'); if(!modal) return;
+  if(modal.classList.contains('open')){ modal.classList.remove('open'); return; }
+  // Populate
+  document.getElementById('qe-tipo').value='egreso';
+  document.getElementById('qe-desc').value='';
+  document.getElementById('qe-monto').value='';
+  document.getElementById('qe-fecha').value=defaultFechaForViewedMonth();
+  // Medios
+  var mpSel=document.getElementById('qe-mp');
+  mpSel.innerHTML=medios.map(function(m){return '<option value="'+esc(m.nombre)+'">'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
+  // Cat / Subcat
+  syncQuickEntry();
+  modal.classList.add('open');
+  setTimeout(function(){ var d=document.getElementById('qe-desc'); if(d) d.focus(); }, 50);
+};
+window.syncQuickEntry=function(){
+  var tipo=document.getElementById('qe-tipo').value;
+  var lbl=document.getElementById('qe-cat-lbl');
+  var sel=document.getElementById('qe-cat');
+  var subWrap=document.getElementById('qe-subcat-wrap');
+  if(tipo==='ingreso'){
+    if(lbl) lbl.textContent='Fuente';
+    sel.innerHTML=buildIngresoCatOpts('');
+    if(subWrap) subWrap.style.display='none';
+  } else {
+    if(lbl) lbl.textContent='Categoría';
+    sel.innerHTML=buildEgresoCatOptsTop('');
+    syncQuickSubcat();
+  }
+};
+window.syncQuickSubcat=function(){
+  var catEl=document.getElementById('qe-cat');
+  var subEl=document.getElementById('qe-subcat');
+  var wrap=document.getElementById('qe-subcat-wrap');
+  if(!catEl||!subEl||!wrap) return;
+  var catName=catEl.value;
+  var parent=cats.find(function(c){return c.nombre===catName && !c.parentId;});
+  var subs=parent?cats.filter(function(c){return c.parentId===parent.id;}):[];
+  if(!subs.length){ wrap.style.display='none'; subEl.innerHTML=''; return; }
+  wrap.style.display='';
+  subEl.innerHTML='<option value="">— sin sub —</option>'+subs.map(function(s){return '<option value="'+esc(s.nombre)+'">'+esc(s.nombre)+'</option>';}).join('');
+};
+window.quickEntrySubmit=function(){
+  var tipo=document.getElementById('qe-tipo').value||'egreso';
+  var desc=document.getElementById('qe-desc').value.trim();
+  var cat=document.getElementById('qe-cat').value;
+  var subEl=document.getElementById('qe-subcat');
+  var subWrap=document.getElementById('qe-subcat-wrap');
+  var subcat=(tipo==='egreso' && subEl && subWrap && subWrap.style.display!=='none')?(subEl.value||''):'';
+  var mp=document.getElementById('qe-mp').value;
+  var monto=parseFloat(document.getElementById('qe-monto').value)||0;
+  var fecha=document.getElementById('qe-fecha').value;
+  if(!desc||!monto){ toast('Faltan datos',true); return; }
+  if(!state.gastos) state.gastos=[];
+  state.gastos.push({id:state.nextId++,tipo:tipo,desc:desc,cat:cat,subcat:subcat,mp:mp,monto:monto,fecha:fecha});
+  save();
+  document.getElementById('quick-modal').classList.remove('open');
+  renderBitacora(); renderResumen(); renderIngresos(); renderSaldos();
+  toast(tipo==='ingreso'?'Ingreso registrado':'Gasto registrado');
+};
 window.nav = nav;
 
 async function changeMes(){
