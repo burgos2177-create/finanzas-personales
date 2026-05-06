@@ -636,6 +636,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     </main>
   </div>
   <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+  <div id="ajuste-modal" class="quick-modal" onclick="if(event.target===this)cerrarAjusteModal()">
+    <div class="quick-modal-inner">
+      <div class="quick-modal-head">
+        <div class="quick-modal-title">⚙ Registrar ajuste</div>
+        <button onclick="cerrarAjusteModal()" class="quick-modal-close">✕</button>
+      </div>
+      <div id="ajuste-modal-info" style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg3);padding:10px 12px;border-radius:8px"></div>
+      <div class="field"><label>Motivo</label>
+        <select id="ajuste-motivo">
+          <option value="Impuestos retenidos">Impuestos retenidos</option>
+          <option value="Comisión">Comisión</option>
+          <option value="Bonificación / Cashback">Bonificación / Cashback</option>
+          <option value="Ajuste manual">Ajuste manual</option>
+          <option value="Otro">Otro</option>
+        </select>
+      </div>
+      <div class="field"><label>Descripción (opcional)</label><input id="ajuste-desc" type="text" placeholder="Ej. ISR mes mayo"></div>
+      <button class="btn btn-green" onclick="confirmarAjuste()" style="width:100%;margin-top:10px;padding:12px;font-size:14px">Aplicar ajuste</button>
+    </div>
+  </div>
   <div id="quick-modal" class="quick-modal" onclick="if(event.target===this)toggleQuickEntry()">
     <div class="quick-modal-inner">
       <div class="quick-modal-head">
@@ -783,7 +803,7 @@ var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
-var totalOverlayKeys=[], showTotalLine=true, customCombos=[];
+var totalOverlayKeys=[], showTotalLine=true, customCombos=[], ajustePending=null;
 var CAT_OVERLAYS={liquid:{label:'Líquidos',color:'#1fd196'},inversion:{label:'Inversiones',color:'#5b9cf6'},empresas:{label:'Empresas',color:'#9b8ef7'},fisicos:{label:'Físicos',color:'#a8d76b'},deuda:{label:'Deuda',color:'#f5a524'}};
 var detalleResumenOpen=false;
 var saveTimer=null;
@@ -1966,7 +1986,13 @@ function valorBase(p, fechaRef){
   }
   return 0;
 }
-function valorPos(p, fechaRef){ return valorBase(p, fechaRef) + (p.ajuste||0); }
+function getAjusteTotal(p){
+  var sum=0;
+  if(typeof p.ajuste==='number') sum+=p.ajuste; // legacy single
+  if(Array.isArray(p.ajustes)) p.ajustes.forEach(function(a){sum+=(a.monto||0);});
+  return Math.round(sum*100)/100;
+}
+function valorPos(p, fechaRef){ return valorBase(p, fechaRef) + getAjusteTotal(p); }
 function aportadoPos(p){
   if(p.subtipo==='PF'||p.subtipo==='TF') return p.montoInicial||0;
   if(p.subtipo==='RV') return p.montoInvertido||0;
@@ -2421,40 +2447,88 @@ window.setSaldoHoy=function(medioId,posId,v){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
   var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
   var newVal=parseFloat(v); if(isNaN(newVal)) return;
-  var formula=valorBase(p);
-  p.ajuste=Math.round((newVal-formula)*100)/100;
-  if(!p.historia) p.historia=[];
-  var hoy=new Date().toISOString().slice(0,10);
-  var last=p.historia[p.historia.length-1];
-  if(last && last.fecha===hoy) last.valor=newVal;
-  else p.historia.push({fecha:hoy,valor:newVal});
+  var currentValor=valorPos(p);
+  var delta=Math.round((newVal-currentValor)*100)/100;
+  if(Math.abs(delta)<0.005){ renderInversion(); return; }
+  // Abrir modal pidiendo motivo
+  ajustePending={medioId:medioId,posId:posId,delta:delta,prevValor:currentValor,nuevoValor:newVal};
+  var modal=document.getElementById('ajuste-modal'); if(!modal) return;
+  document.getElementById('ajuste-modal-info').innerHTML=
+    '<div style="font-size:13px;font-weight:500;margin-bottom:4px">'+esc(p.nombre||'Posición')+'</div>'+
+    '<div style="display:flex;justify-content:space-between"><span>Saldo actual:</span><span style="font-family:var(--mono)">'+fmt(currentValor)+'</span></div>'+
+    '<div style="display:flex;justify-content:space-between"><span>Nuevo saldo:</span><span style="font-family:var(--mono)">'+fmt(newVal)+'</span></div>'+
+    '<div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:6px;padding-top:6px;font-weight:500"><span>Diferencia:</span><span style="font-family:var(--mono);color:'+(delta>=0?'var(--green)':'var(--red)')+'">'+(delta>=0?'+':'')+fmt(delta)+'</span></div>';
+  document.getElementById('ajuste-desc').value='';
+  document.getElementById('ajuste-motivo').value=delta<0?'Impuestos retenidos':'Bonificación / Cashback';
+  modal.classList.add('open');
+};
+window.cerrarAjusteModal=function(){
+  var modal=document.getElementById('ajuste-modal'); if(modal) modal.classList.remove('open');
+  ajustePending=null;
+  // Re-renderizar para revertir el input
+  renderInversion();
+};
+window.confirmarAjuste=function(){
+  if(!ajustePending) return;
+  var m=medios.find(function(x){return x.id===ajustePending.medioId;}); if(!m){ cerrarAjusteModal(); return; }
+  var p=(m.posiciones||[]).find(function(x){return x.id===ajustePending.posId;}); if(!p){ cerrarAjusteModal(); return; }
+  var motivo=document.getElementById('ajuste-motivo').value;
+  var desc=(document.getElementById('ajuste-desc').value||'').trim();
+  var delta=ajustePending.delta;
+  // Migrar legado
+  if(typeof p.ajuste==='number' && p.ajuste!==0){
+    if(!p.ajustes) p.ajustes=[];
+    p.ajustes.unshift({fecha:p.fechaInicio||new Date().toISOString().slice(0,10),monto:p.ajuste,motivo:'Ajuste anterior'});
+    delete p.ajuste;
+  }
+  if(!p.ajustes) p.ajustes=[];
+  p.ajustes.push({fecha:new Date().toISOString().slice(0,10),monto:delta,motivo:motivo,descripcion:desc});
+  appendHistoriaPos(p);
+  ajustePending=null;
+  document.getElementById('ajuste-modal').classList.remove('open');
   save(); renderInversion(); renderSaldos(); renderResumen();
-  toast('Saldo ajustado');
+  toast(motivo+' '+(delta>=0?'+':'')+fmt(delta));
 };
 window.clearAjuste=function(medioId,posId){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
   var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  if(!confirm('¿Eliminar TODOS los ajustes acumulados de esta posición?')) return;
   p.ajuste=0;
+  p.ajustes=[];
   save(); renderInversion(); renderSaldos(); renderResumen();
-  toast('Ajuste eliminado');
+  toast('Ajustes eliminados');
 };
 function saldoHoyHtml(medioId,p,lblText){
-  var formula=valorBase(p), actual=valorPos(p), ajuste=p.ajuste||0;
+  var formula=valorBase(p), actual=valorPos(p), ajuste=getAjusteTotal(p);
   var open=!!adjustingPos[p.id];
   var hasAjuste=Math.abs(ajuste)>0.005;
+  var ajustesList=Array.isArray(p.ajustes)?p.ajustes:[];
   var gearCol=open?'var(--green)':(hasAjuste?'var(--amber)':'var(--text3)');
-  var gear='<button onclick="toggleAdjustPos(\''+p.id+'\')" style="background:none;border:none;cursor:pointer;color:'+gearCol+';font-size:11px;padding:0 0 0 4px;line-height:1" title="Ajustar manualmente">⚙</button>';
-  var clearBtn=hasAjuste?'<button onclick="clearAjuste('+medioId+',\''+p.id+'\')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:10px;padding:0 0 0 4px;line-height:1" title="Quitar ajuste">↺</button>':'';
+  var gear='<button onclick="toggleAdjustPos(\''+p.id+'\')" style="background:none;border:none;cursor:pointer;color:'+gearCol+';font-size:11px;padding:0 0 0 4px;line-height:1" title="Ajustar saldo manualmente (impuestos, comisiones, etc.)">⚙</button>';
+  var clearBtn=hasAjuste?'<button onclick="clearAjuste('+medioId+',\''+p.id+'\')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:10px;padding:0 0 0 4px;line-height:1" title="Quitar todos los ajustes">↺</button>':'';
   var lbl='<div class="inv-stat-lbl" style="display:flex;align-items:center">'+(lblText||'Saldo hoy')+gear+clearBtn+'</div>';
+  // Listado de ajustes (cuando está abierto o cuando hay ajustes registrados)
+  var ajusteLog='';
+  if(open && ajustesList.length){
+    ajusteLog='<div style="font-size:9px;color:var(--text3);margin-top:4px;border-top:1px solid var(--border);padding-top:4px;max-height:80px;overflow-y:auto">'+
+      '<div style="font-weight:500;margin-bottom:2px">Historial ('+ajustesList.length+'):</div>'+
+      ajustesList.slice().reverse().map(function(a){
+        var d=a.fecha?a.fecha.split('-').slice(1).reverse().join('/'):'';
+        var col=(a.monto||0)>=0?'var(--green)':'var(--red)';
+        return '<div style="display:flex;justify-content:space-between;gap:6px;padding:1px 0"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+d+' '+esc(a.motivo||'-')+(a.descripcion?' · '+esc(a.descripcion):'')+'</span><span style="color:'+col+';font-family:var(--mono)">'+(a.monto>=0?'+':'')+fmt(a.monto||0)+'</span></div>';
+      }).join('')+
+    '</div>';
+  }
   if(open){
     return '<div class="inv-stat" style="border-color:rgba(31,209,150,0.4)">'+lbl+
-      '<input type="number" value="'+(Math.round(actual*100)/100)+'" step="0.01" onchange="setSaldoHoy('+medioId+',\''+p.id+'\',this.value)">'+
-      '<div style="font-size:9px;color:var(--text3);margin-top:3px">Fórmula '+fmt(formula)+(hasAjuste?' · Ajuste '+(ajuste>=0?'+':'')+fmt(ajuste):'')+'</div>'+
+      '<input type="number" value="'+(Math.round(actual*100)/100)+'" step="0.01" onchange="setSaldoHoy('+medioId+',\''+p.id+'\',this.value)" placeholder="Nuevo saldo real" title="Tipea el saldo real y se te pedirá el motivo">'+
+      '<div style="font-size:9px;color:var(--text3);margin-top:3px">Fórmula '+fmt(formula)+(hasAjuste?' · Ajustes '+(ajuste>=0?'+':'')+fmt(ajuste):'')+'</div>'+
+      ajusteLog+
     '</div>';
   }
   return '<div class="inv-stat">'+lbl+
     '<div class="inv-stat-val green">'+fmt(actual)+'</div>'+
-    (hasAjuste?'<div style="font-size:9px;color:var(--amber);margin-top:2px">incl. ajuste '+(ajuste>=0?'+':'')+fmt(ajuste)+'</div>':'')+
+    (hasAjuste?'<div style="font-size:9px;color:var(--amber);margin-top:2px">incl. ajuste '+(ajuste>=0?'+':'')+fmt(ajuste)+(ajustesList.length>1?' ('+ajustesList.length+' entradas)':'')+'</div>':'')+
   '</div>';
 }
 window.syncAddPosForm=function(medioId){
