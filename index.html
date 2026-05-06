@@ -2867,6 +2867,20 @@ function filterSeriesByRange(series, range){
   var cstr=isoDate(cutoff);
   return series.filter(function(s){return s.date>=cstr;});
 }
+function refreshCacheTodayPoint(){
+  if(!globalCache||!globalCache.seriesDaily||!globalCache.seriesDaily.length) return;
+  var todayStr=isoDate(new Date());
+  var lastP=globalCache.seriesDaily[globalCache.seriesDaily.length-1];
+  if(lastP.date!==todayStr) return;
+  var live=computeCategoriaTotals();
+  lastP.liquid=live.liquido;
+  lastP.inversion=live.inv;
+  lastP.empresas=live.empresas;
+  lastP.fisicos=live.fisicos;
+  lastP.deuda=live.deuda;
+  lastP.patrimonio=live.liquido+live.inv-live.deuda;
+  lastP.patrimonioTotal=live.liquido+live.inv-live.deuda+live.empresas+live.fisicos;
+}
 async function renderGlobal(){
   renderEmpresasSection();
   renderFisicosSection();
@@ -2883,6 +2897,7 @@ async function renderGlobal(){
     // Refresh categoría chart now that we have the latest months in cache
     renderCategoriasChart();
   }
+  refreshCacheTodayPoint();
   var series=globalCache.series;
   var seriesDaily=globalCache.seriesDaily||series;
   if(!series.length){
@@ -3294,6 +3309,7 @@ function renderPatrimonioTotalChart(){
     });
     return;
   }
+  refreshCacheTodayPoint();
   var filteredDaily=filterSeriesByRange(globalCache.seriesDaily, totalRange);
   if(!filteredDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
   var first=filteredDaily[0], last=filteredDaily[filteredDaily.length-1];
