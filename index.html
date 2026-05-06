@@ -411,6 +411,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Suma de las 5 categorías (líquidos + inversiones + empresas + físicos − deuda).</div>
           <div class="ch-wrap" style="height:280px"><canvas id="total-chart"></canvas></div>
           <div class="bit-toolbar" id="total-ranges" style="margin-top:14px;justify-content:center"></div>
+          <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;text-align:center">Sobreponer categorías</div>
+            <div class="bit-toolbar" id="total-overlays" style="justify-content:center"></div>
+          </div>
         </div>
       </div>
 
@@ -778,6 +782,8 @@ var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
+var totalOverlayKeys=[];
+var CAT_OVERLAYS={liquid:{label:'Líquidos',color:'#1fd196'},inversion:{label:'Inversiones',color:'#5b9cf6'},empresas:{label:'Empresas',color:'#9b8ef7'},fisicos:{label:'Físicos',color:'#a8d76b'},deuda:{label:'Deuda',color:'#f5a524'}};
 var detalleResumenOpen=false;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
@@ -2946,6 +2952,51 @@ async function renderGlobal(){
 }
 window.setGlobalRange=function(r){ globalRange=r; renderGlobal(); };
 window.setTotalRange=function(r){ totalRange=r; renderPatrimonioTotalChart(); };
+function overlayLabel(key){
+  return key.split('+').map(function(p){return (CAT_OVERLAYS[p]||{label:p}).label;}).join(' + ');
+}
+function overlayColor(key){
+  var parts=key.split('+');
+  if(parts.length===1) return (CAT_OVERLAYS[parts[0]]||{color:'#8b90a0'}).color;
+  // hash a color para combinados
+  var h=0; for(var i=0;i<key.length;i++) h=((h<<5)-h+key.charCodeAt(i))|0;
+  var hue=Math.abs(h)%360;
+  return 'hsl('+hue+',60%,55%)';
+}
+function overlayValue(point, key){
+  var parts=key.split('+');
+  return parts.reduce(function(sum,p){
+    if(p==='liquid') return sum+(point.liquid||0);
+    if(p==='inversion') return sum+(point.inversion||0);
+    if(p==='empresas') return sum+(point.empresas||0);
+    if(p==='fisicos') return sum+(point.fisicos||0);
+    if(p==='deuda') return sum+(point.deuda||0);
+    return sum;
+  },0);
+}
+window.toggleTotalOverlay=function(key){
+  var idx=totalOverlayKeys.indexOf(key);
+  if(idx>=0) totalOverlayKeys.splice(idx,1);
+  else totalOverlayKeys.push(key);
+  renderPatrimonioTotalChart();
+};
+window.removeTotalOverlay=function(key){
+  totalOverlayKeys=totalOverlayKeys.filter(function(k){return k!==key;});
+  renderPatrimonioTotalChart();
+};
+window.addTotalOverlayCombo=function(){
+  var defaults=[{key:'liquid',label:'Líquidos'},{key:'inversion',label:'Inversiones'},{key:'empresas',label:'Empresas'},{key:'fisicos',label:'Físicos'},{key:'deuda',label:'Deuda'}];
+  var items=defaults.map(function(d,i){return (i+1)+'. '+d.label;}).join('\n');
+  var input=prompt('Combinar categorías — números separados por coma (mínimo 2):\n\n'+items+'\n\nEj: 2,3 = Inversiones + Empresas');
+  if(!input) return;
+  var nums=input.split(',').map(function(s){return parseInt(s.trim(),10);}).filter(function(n){return n>=1&&n<=5;});
+  if(nums.length<2){ toast('Selecciona al menos 2',true); return; }
+  // dedupe + sort para que el key sea determinista
+  nums=Array.from(new Set(nums)).sort(function(a,b){return a-b;});
+  var key=nums.map(function(n){return defaults[n-1].key;}).join('+');
+  if(totalOverlayKeys.indexOf(key)===-1) totalOverlayKeys.push(key);
+  renderPatrimonioTotalChart();
+};
 window.refreshGlobal=function(){ globalCache=null; renderGlobal(); };
 
 // ── Empresas: listener en tiempo real + CRUD ──
@@ -3242,10 +3293,34 @@ function renderPatrimonioTotalChart(){
   var ptR=n<31?2.5:(n<92?1.2:(n<366?0.6:0));
   var col=change>=0?'#9b8ef7':'#f05c5c';
   var bgcol=change>=0?'rgba(155,142,247,0.1)':'rgba(240,92,92,0.1)';
-  if(totalChart) totalChart.destroy();
-  totalChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
+  // Render chips de overlay
+  var overlaysEl=document.getElementById('total-overlays');
+  if(overlaysEl){
+    var defaults=['liquid','inversion','empresas','fisicos','deuda'];
+    var html='';
+    defaults.forEach(function(k){
+      var meta=CAT_OVERLAYS[k];
+      var active=totalOverlayKeys.indexOf(k)>=0;
+      html+='<div class="chip '+(active?'active':'')+'" onclick="toggleTotalOverlay(\''+k+'\')" style="'+(active?'background:'+meta.color+'22;border-color:'+meta.color+'66;color:'+meta.color:'')+'">'+esc(meta.label)+'</div>';
+    });
+    var customs=totalOverlayKeys.filter(function(k){return k.indexOf('+')>=0;});
+    customs.forEach(function(k){
+      var col2=overlayColor(k);
+      html+='<div class="chip active" style="background:'+col2+'22;border-color:'+col2+'66;color:'+col2+';display:inline-flex;align-items:center;gap:4px">'+esc(overlayLabel(k))+'<button onclick="event.stopPropagation();removeTotalOverlay(\''+esc(k)+'\')" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;padding:0 0 0 4px;line-height:1;opacity:0.7">✕</button></div>';
+    });
+    html+='<button class="chip" onclick="addTotalOverlayCombo()" style="cursor:pointer;border-style:dashed">+ combinar</button>';
+    overlaysEl.innerHTML=html;
+  }
+  // Build datasets: total + overlays
+  var datasets=[
     {label:'Patrimonio total',data:filteredDaily.map(function(s){return s.patrimonioTotal;}),borderColor:col,backgroundColor:bgcol,fill:true,tension:0.25,pointRadius:ptR,pointHoverRadius:4,pointBackgroundColor:col,borderWidth:2}
-  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var s=filteredDaily[i]; if(!s) return ''; var p=s.date.split('-'); return p[2]+'/'+p[1]+'/'+p[0];},label:function(c){var i=c.dataIndex; var s=filteredDaily[i]; var lines=[fmt(c.raw)]; if(s){ lines.push('  Líquidos '+fmt(s.liquid)); lines.push('  Inversiones '+fmt(s.inversion)); lines.push('  Empresas '+fmt(s.empresas)); lines.push('  Físicos '+fmt(s.fisicos)); lines.push('  Deuda '+fmt(s.deuda));} return lines;}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:maxTicks},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+  ];
+  totalOverlayKeys.forEach(function(k){
+    var oc=overlayColor(k);
+    datasets.push({label:overlayLabel(k),data:filteredDaily.map(function(s){return overlayValue(s,k);}),borderColor:oc,backgroundColor:oc+'18',fill:false,tension:0.25,pointRadius:0,pointHoverRadius:4,borderWidth:2});
+  });
+  if(totalChart) totalChart.destroy();
+  totalChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:totalOverlayKeys.length>0,position:'top',labels:{color:'#8b90a0',font:{size:10},boxWidth:10,padding:8}},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var s=filteredDaily[i]; if(!s) return ''; var p=s.date.split('-'); return p[2]+'/'+p[1]+'/'+p[0];},label:function(c){return c.dataset.label+': '+fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:maxTicks},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
 }
 
 
