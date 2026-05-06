@@ -804,13 +804,13 @@ function syncStatus(s){
 }
 
 // ── Save to Firestore (debounced 800ms) ──
-function save(skipDelay){
+function save(skipDelay, keepCache){
   if(saveTimer) clearTimeout(saveTimer);
   syncStatus('saving');
   var delay = skipDelay ? 0 : 800;
   saveTimer = setTimeout(function(){
     if(!uid()){ syncStatus('offline'); return; }
-    globalCache=null;
+    if(!keepCache) globalCache=null;
     var mesData = JSON.parse(JSON.stringify(state));
     var p1 = window._setDoc(mesDocRef(), mesData);
     var p2 = window._setDoc(globalDocRef('subs'), {list: subs});
@@ -2985,7 +2985,7 @@ window.removeCustomCombo=function(key){
   customCombos=customCombos.filter(function(k){return k!==key;});
   totalOverlayKeys=totalOverlayKeys.filter(function(k){return k!==key;});
   globalConfig.customCombos=customCombos.slice();
-  save(); renderPatrimonioTotalChart();
+  save(false,true); renderPatrimonioTotalChart();
 };
 window.addTotalOverlayCombo=function(){
   var defaults=[{key:'liquid',label:'Líquidos'},{key:'inversion',label:'Inversiones'},{key:'empresas',label:'Empresas'},{key:'fisicos',label:'Físicos'},{key:'deuda',label:'Deuda'}];
@@ -2999,7 +2999,7 @@ window.addTotalOverlayCombo=function(){
   if(customCombos.indexOf(key)===-1) customCombos.push(key);
   if(totalOverlayKeys.indexOf(key)===-1) totalOverlayKeys.push(key);
   globalConfig.customCombos=customCombos.slice();
-  save(); renderPatrimonioTotalChart();
+  save(false,true); renderPatrimonioTotalChart();
 };
 window.refreshGlobal=function(){ globalCache=null; renderGlobal(); };
 
@@ -3280,7 +3280,15 @@ function renderPatrimonioTotalChart(){
   var ranges=[{k:'1d',l:'1D'},{k:'1s',l:'1S'},{k:'15d',l:'15D'},{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
   var rangesEl=document.getElementById('total-ranges');
   if(rangesEl) rangesEl.innerHTML=ranges.map(function(r){return '<div class="chip '+(r.k===totalRange?'active':'')+'" onclick="setTotalRange(\''+r.k+'\')">'+r.l+'</div>';}).join('');
-  if(!globalCache||!globalCache.seriesDaily||!globalCache.seriesDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
+  if(!globalCache||!globalCache.seriesDaily||!globalCache.seriesDaily.length){
+    if(totalChart){totalChart.destroy();totalChart=null;}
+    // Lazy reload: si el cache se invalidó, lo reconstruye y vuelve a renderizar
+    if(uid()) loadAllMonthDocs().then(function(months){
+      globalCache={months:months,series:buildPatrimonioSeries(months),seriesDaily:buildPatrimonioSeriesDaily(months)};
+      renderPatrimonioTotalChart();
+    });
+    return;
+  }
   var filteredDaily=filterSeriesByRange(globalCache.seriesDaily, totalRange);
   if(!filteredDaily.length){ if(totalChart){totalChart.destroy();totalChart=null;} return; }
   var first=filteredDaily[0], last=filteredDaily[filteredDaily.length-1];
