@@ -2702,9 +2702,14 @@ async function loadAllMonthDocs(){
 }
 function valorPosAtDate(p, dateRef){
   if(p.subtipo==='PF'||p.subtipo==='TF') return valorBase(p, dateRef)+(p.ajuste||0);
+  var dStr=typeof dateRef==='string'?dateRef:isoDate(dateRef);
+  var todayStr=isoDate(new Date());
+  // Para hoy o futuro: usar el valor actual calculado (precioActual × cantidad + ajuste).
+  // Es la verdad más reciente; historia puede estar desactualizada si los precios
+  // cambiaron sin disparar appendHistoriaPos (deltas <$0.01 no se anexan).
+  if(dStr>=todayStr) return valorPos(p);
   var hist=(p.historia||[]).slice().sort(function(a,b){return (a.fecha||'').localeCompare(b.fecha||'');});
   if(!hist.length) return valorPos(p);
-  var dStr=typeof dateRef==='string'?dateRef:isoDate(dateRef);
   var best=null;
   for(var i=0;i<hist.length;i++){ if(hist[i].fecha<=dStr) best=hist[i]; else break; }
   return best?best.valor:hist[0].valor;
