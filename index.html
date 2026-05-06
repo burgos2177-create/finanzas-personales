@@ -2987,18 +2987,16 @@ async function loadAllMonthDocs(){
   } catch(e){ console.error(e); return []; }
 }
 function valorPosAtDate(p, dateRef){
-  if(p.subtipo==='PF'||p.subtipo==='TF') return valorBase(p, dateRef)+(p.ajuste||0);
+  if(p.subtipo==='PF'||p.subtipo==='TF') return valorBase(p, dateRef)+getAjusteTotal(p);
+  // Para Acciones/Cripto/RV: anclar al valor de mercado actual.
+  // No tenemos snapshots diarios reales (precios + tipo de cambio); historia[]
+  // típicamente solo tiene cost basis en fechaInicio + valor actual hoy. Usar
+  // los entries directos crearía saltos entre cost basis y mercado actual que
+  // distorsionan el chart. Anclar al valor actual da una serie consistente.
   var dStr=typeof dateRef==='string'?dateRef:isoDate(dateRef);
-  var todayStr=isoDate(new Date());
-  // Para hoy o futuro: usar el valor actual calculado (precioActual × cantidad + ajuste).
-  // Es la verdad más reciente; historia puede estar desactualizada si los precios
-  // cambiaron sin disparar appendHistoriaPos (deltas <$0.01 no se anexan).
-  if(dStr>=todayStr) return valorPos(p);
-  var hist=(p.historia||[]).slice().sort(function(a,b){return (a.fecha||'').localeCompare(b.fecha||'');});
-  if(!hist.length) return valorPos(p);
-  var best=null;
-  for(var i=0;i<hist.length;i++){ if(hist[i].fecha<=dStr) best=hist[i]; else break; }
-  return best?best.valor:hist[0].valor;
+  var fechaInicioStr=p.fechaInicio||null;
+  if(fechaInicioStr && dStr<fechaInicioStr) return 0; // posición no adquirida aún en esta fecha
+  return valorPos(p);
 }
 function snapshotAtMonthEnd(month){
   var endDate=new Date(month.anio,month.mes+1,0);
