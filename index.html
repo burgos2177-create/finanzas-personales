@@ -1231,9 +1231,10 @@ function renderBitChart(gastos){
   var ingByDate={}, egrByDate={}, allDates={};
   gastos.forEach(function(g){
     if(!g.fecha) return;
+    if(g.tipo==='transfer') return; // transferencias no cuentan en evolución acumulada
     allDates[g.fecha]=true;
     if(gTipo(g)==='ingreso') ingByDate[g.fecha]=(ingByDate[g.fecha]||0)+g.monto;
-    else egrByDate[g.fecha]=(egrByDate[g.fecha]||0)+g.monto;
+    else if(gTipo(g)==='egreso') egrByDate[g.fecha]=(egrByDate[g.fecha]||0)+g.monto;
   });
   var dates=Object.keys(allDates).sort();
   if(!dates.length) return;
@@ -1742,7 +1743,10 @@ function renderBitacora(){
       (m!=='Todos'?medioIcono(m)+' ':'')+esc(m)+'</div>';
   }).join('');
 
-  var totFiltered=filtered.reduce(function(a,g){return a+(gTipo(g)==='ingreso'?g.monto:-g.monto);},0);
+  var totFiltered=filtered.reduce(function(a,g){
+    if(g.tipo==='transfer') return a; // las transferencias no cuentan en el balance
+    return a+(gTipo(g)==='ingreso'?g.monto:-g.monto);
+  },0);
   document.getElementById('bit-total-badge').textContent=(totFiltered>=0?'+':'')+fmt(totFiltered);
   document.getElementById('bit-count').textContent=filtered.length+' entrada'+(filtered.length!==1?'s':'');
 
@@ -2834,7 +2838,7 @@ function renderSemanal(){
 
   // Daily breakdown
   var byDay={};
-  weekGs.forEach(function(g){ if(!byDay[g.fecha]) byDay[g.fecha]={ing:0,egr:0}; if(gTipo(g)==='ingreso') byDay[g.fecha].ing+=g.monto; else byDay[g.fecha].egr+=g.monto; });
+  weekGs.forEach(function(g){ if(g.tipo==='transfer') return; if(!byDay[g.fecha]) byDay[g.fecha]={ing:0,egr:0}; if(gTipo(g)==='ingreso') byDay[g.fecha].ing+=g.monto; else if(gTipo(g)==='egreso') byDay[g.fecha].egr+=g.monto; });
   var allDates=[];
   for(var d=new Date(sel.monthStart); d<=sel.monthEnd; d.setDate(d.getDate()+1)){ allDates.push(isoDate(d)); }
   var labels=allDates.map(function(d){var p=d.split('-');return p[2]+'/'+p[1];});
@@ -2856,7 +2860,7 @@ function renderSemanal(){
 
   // Top medios
   var mpTots={};
-  weekGs.forEach(function(g){var k=g.mp||'Sin medio'; if(!mpTots[k]) mpTots[k]={ing:0,egr:0}; if(gTipo(g)==='ingreso') mpTots[k].ing+=g.monto; else mpTots[k].egr+=g.monto;});
+  weekGs.forEach(function(g){if(g.tipo==='transfer') return; var k=g.mp||'Sin medio'; if(!mpTots[k]) mpTots[k]={ing:0,egr:0}; if(gTipo(g)==='ingreso') mpTots[k].ing+=g.monto; else if(gTipo(g)==='egreso') mpTots[k].egr+=g.monto;});
   var mpKeys=Object.keys(mpTots).sort(function(a,b){return (mpTots[b].ing+mpTots[b].egr)-(mpTots[a].ing+mpTots[a].egr);});
   document.getElementById('weekly-mps').innerHTML=mpKeys.length?mpKeys.map(function(k){var v=mpTots[k]; var net=v.ing-v.egr; return '<div class="cat-sumrow"><span style="font-size:13px">'+medioIcono(k)+'</span><div class="row-main"><div style="font-size:12px">'+esc(k)+'</div></div>'+(v.ing>0?'<span style="font-size:11px;font-family:var(--mono);color:var(--green);min-width:60px;text-align:right">+'+fmt(v.ing)+'</span>':'')+(v.egr>0?'<span style="font-size:11px;font-family:var(--mono);color:var(--red);min-width:60px;text-align:right">−'+fmt(v.egr)+'</span>':'')+'<span style="font-size:11px;font-family:var(--mono);color:'+(net>=0?'var(--green)':'var(--red)')+';min-width:70px;text-align:right;font-weight:500">'+(net>=0?'+':'')+fmt(net)+'</span></div>';}).join(''):'<div class="empty">Sin movimientos</div>';
 
