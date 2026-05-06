@@ -724,6 +724,7 @@ var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
+var detalleResumenOpen=false;
 var saveTimer=null;
 var lastLoadInherited=false, lastInheritedFrom=null;
 
@@ -1136,7 +1137,165 @@ function renderResumen(){
     ?sc.map(function(e){return catSumRow(e[0],e[1],maxV,catColor(e[0]));}).join('')
     :'<div class="empty">Sin egresos registrados</div>';
   renderFlujoChart(); renderCuentasChart();
+  renderDetalleResumen();
 }
+function renderDetalleResumen(){
+  var container=document.getElementById('dash-detalle');
+  if(!container){
+    var dash=document.getElementById('s-resumen');
+    if(!dash) return;
+    var btnWrap=document.createElement('div');
+    btnWrap.style='text-align:center;margin-top:18px';
+    btnWrap.innerHTML='<button class="btn" id="dash-detalle-btn" onclick="toggleDetalleResumen()" style="font-size:13px"></button>';
+    var detEl=document.createElement('div');
+    detEl.id='dash-detalle';
+    detEl.style='margin-top:14px;display:none';
+    dash.appendChild(btnWrap);
+    dash.appendChild(detEl);
+    container=detEl;
+  }
+  document.getElementById('dash-detalle-btn').textContent=detalleResumenOpen?'▼ Cerrar resumen detallado':'📊 Ver resumen detallado del mes';
+  container.style.display=detalleResumenOpen?'':'none';
+  if(!detalleResumenOpen) return;
+
+  var ingR=totIngresosReales();
+  var egrR=totEgresosReales();
+  var egrFijoT=totPresup();
+  var ingFijoT=totIngresos();
+  var saving=ingR>0?Math.round((1-egrR/ingR)*100):0;
+  var savingT=ingFijoT>0?Math.round((1-egrFijoT/ingFijoT)*100):0;
+  var balReal=ingR-egrR;
+
+  // Hierarchy: cat → {total, subs:{subname: total}}
+  var hier={};
+  var egrosos=egresosBit();
+  egrosos.forEach(function(g){
+    if(!g.cat) return;
+    if(!hier[g.cat]) hier[g.cat]={total:0,subs:{}};
+    hier[g.cat].total+=g.monto;
+    var sk=g.subcat||'(sin sub)';
+    hier[g.cat].subs[sk]=(hier[g.cat].subs[sk]||0)+g.monto;
+  });
+  var sortedCats=Object.entries(hier).sort(function(a,b){return b[1].total-a[1].total;});
+
+  // Top day
+  var byDay={};
+  egrosos.forEach(function(g){ if(g.fecha) byDay[g.fecha]=(byDay[g.fecha]||0)+g.monto; });
+  var topDay=Object.entries(byDay).sort(function(a,b){return b[1]-a[1];})[0];
+
+  // Daily average so far
+  var n=new Date();
+  var thisMonthSel=(currentAnio===String(n.getFullYear()) && MESES.indexOf(currentMes)===n.getMonth());
+  var daysSpan=thisMonthSel?n.getDate():daysInMonth(parseInt(currentAnio,10), MESES.indexOf(currentMes));
+  var avgDaily=daysSpan>0?egrR/daysSpan:0;
+
+  // Top subcat
+  var subTots={};
+  egrosos.forEach(function(g){ if(g.subcat){ var k=g.cat+'|'+g.subcat; subTots[k]=(subTots[k]||0)+g.monto; } });
+  var topSub=Object.entries(subTots).sort(function(a,b){return b[1]-a[1];})[0];
+
+  // Egresos fijos: cumplimiento
+  var fijosOver=state.egresos.filter(function(e){return gastadoEgreso(e)>e.presup && e.presup>0;});
+  var fijosWithin=state.egresos.filter(function(e){var g=gastadoEgreso(e); return g<=e.presup && e.presup>0;});
+
+  // KPIs
+  var kpis=
+    mc('Tasa de ahorro',saving+'%',saving>=20?'green':saving>=10?'amber':'red','vs '+savingT+'% teórico')+
+    mc('% ejecutado fijos',(egrFijoT>0?Math.round(totGastados()/egrFijoT*100):0)+'%','blue',totGastados()>egrFijoT?'sobrepasado':'dentro')+
+    mc('Categoría top',sortedCats.length?esc(sortedCats[0][0]):'—',sortedCats.length?'red':'',sortedCats.length?fmt(sortedCats[0][1]):'')+
+    mc('Día de mayor gasto',topDay?topDay[0].split('-').slice(1).reverse().join('/'):'—','red',topDay?fmt(topDay[1]):'')+
+    mc('Promedio diario',fmt(avgDaily),'amber',daysSpan+' días')+
+    mc('Subcategoría top',topSub?esc(topSub[0].split('|')[1]):'—',topSub?'red':'',topSub?fmt(topSub[1])+' de '+topSub[0].split('|')[0]:'');
+
+  // Breakdown HTML
+  var maxCat=Math.max.apply(null,sortedCats.map(function(e){return e[1].total;}).concat([1]));
+  var breakHtml=sortedCats.map(function(entry){
+    var cat=entry[0], data=entry[1];
+    var col=catColor(cat);
+    var w=Math.round(data.total/maxCat*100);
+    var pctOfEgr=egrR>0?Math.round(data.total/egrR*100):0;
+    var subEntries=Object.entries(data.subs).sort(function(a,b){return b[1]-a[1];});
+    var subsHtml=subEntries.map(function(s){
+      var subName=s[0], v=s[1];
+      var pctOfCat=data.total>0?Math.round(v/data.total*100):0;
+      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;padding-left:24px;font-size:12px"><span style="color:var(--text3)">↳</span><div class="row-main" style="color:'+(subName==='(sin sub)'?'var(--text3)':'var(--text2)')+'">'+esc(subName)+'</div><div class="cat-bar-track" style="max-width:120px"><div class="cat-bar-fill" style="width:'+pctOfCat+'%;background:'+col+'66"></div></div><div style="font-size:11px;font-family:var(--mono);color:var(--text3);min-width:38px;text-align:right">'+pctOfCat+'%</div><div style="font-size:12px;font-family:var(--mono);color:var(--text2);min-width:80px;text-align:right">'+fmt(v)+'</div></div>';
+    }).join('');
+    return '<div style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="width:10px;height:10px;border-radius:50%;background:'+col+';flex-shrink:0"></span><div class="row-main" style="font-weight:500;color:'+col+'">'+esc(cat)+'</div><div class="cat-bar-track"><div class="cat-bar-fill" style="width:'+w+'%;background:'+col+'"></div></div><div style="font-size:12px;font-family:var(--mono);color:var(--text2);min-width:48px;text-align:right">'+pctOfEgr+'%</div><div style="font-size:13px;font-weight:500;font-family:var(--mono);color:'+col+';min-width:90px;text-align:right">'+fmt(data.total)+'</div></div>'+subsHtml+'</div>';
+  }).join('');
+  if(!sortedCats.length) breakHtml='<div class="empty">Sin egresos registrados</div>';
+
+  // Insights
+  var insights=[];
+  if(saving>=20) insights.push({ic:'✅',col:'var(--green)',txt:'Tasa de ahorro de '+saving+'% — excelente. Sigue así.'});
+  else if(saving>=10) insights.push({ic:'🟡',col:'var(--amber)',txt:'Tasa de ahorro de '+saving+'% — buena, pero hay margen para crecer.'});
+  else if(saving>=0) insights.push({ic:'🟠',col:'var(--amber)',txt:'Tasa de ahorro solo de '+saving+'% — considera reducir egresos no esenciales.'});
+  else insights.push({ic:'🔴',col:'var(--red)',txt:'Estás gastando más de lo que ingresas ('+saving+'%). Atención al balance.'});
+  if(sortedCats.length){
+    var top=sortedCats[0]; var pct=egrR>0?Math.round(top[1].total/egrR*100):0;
+    insights.push({ic:'📊',col:'var(--blue)',txt:'"'+top[0]+'" representa '+pct+'% de tus egresos ('+fmt(top[1].total)+').'});
+  }
+  if(topSub){
+    var ks=topSub[0].split('|');
+    insights.push({ic:'🎯',col:'var(--purple)',txt:'Subcategoría con mayor gasto: '+ks[0]+' › '+ks[1]+' con '+fmt(topSub[1])+'.'});
+  }
+  if(topDay && daysSpan>1){
+    var p=topDay[0].split('-');
+    var concentration=egrR>0?Math.round(topDay[1]/egrR*100):0;
+    if(concentration>=25) insights.push({ic:'⚡',col:'var(--amber)',txt:'El '+p[2]+'/'+p[1]+' concentró '+concentration+'% de los egresos ('+fmt(topDay[1])+').'});
+  }
+  if(fijosOver.length){
+    insights.push({ic:'⚠',col:'var(--red)',txt:fijosOver.length+' egreso(s) fijo(s) excedieron el presupuesto: '+fijosOver.map(function(e){return e.concepto+' (+'+fmt(gastadoEgreso(e)-e.presup)+')';}).join(', ')+'.'});
+  }
+  if(fijosWithin.length){
+    var totDif=fijosWithin.reduce(function(a,e){return a+(e.presup-gastadoEgreso(e));},0);
+    if(totDif>0) insights.push({ic:'✓',col:'var(--green)',txt:fijosWithin.length+' egreso(s) fijos dentro de presupuesto, con '+fmt(totDif)+' sin usar.'});
+  }
+  if(thisMonthSel && daysSpan>0){
+    var diasMes=daysInMonth(parseInt(currentAnio,10), MESES.indexOf(currentMes));
+    var diasRest=diasMes-daysSpan;
+    if(diasRest>0){
+      var proyEgr=avgDaily*diasMes;
+      insights.push({ic:'🔮',col:'var(--purple)',txt:'Al ritmo actual ('+fmt(avgDaily)+'/día) cerrarías el mes en '+fmt(proyEgr)+' de egresos ('+(diasRest)+' días restantes).'});
+    }
+  }
+
+  // Compare with previous month if cache available
+  var compHtml='';
+  if(globalCache && globalCache.months){
+    var curKey=parseInt(currentAnio,10)*12+MESES.indexOf(currentMes);
+    var prev=null, bestKey=-1;
+    globalCache.months.forEach(function(m){
+      var k=m.anio*12+m.mes;
+      if(k<curKey && k>bestKey){ bestKey=k; prev=m; }
+    });
+    if(prev){
+      var prevEgr=(prev.data.gastos||[]).filter(function(g){return (g.tipo||'egreso')==='egreso';}).reduce(function(a,g){return a+g.monto;},0);
+      var prevIng=(prev.data.gastos||[]).filter(function(g){return (g.tipo||'egreso')==='ingreso';}).reduce(function(a,g){return a+g.monto;},0);
+      var dEgr=egrR-prevEgr, dIng=ingR-prevIng;
+      var prevName=MESES[prev.mes]+' '+prev.anio;
+      compHtml='<div class="card" style="margin-top:14px;background:var(--bg3)"><div class="card-header"><div class="card-title" style="font-size:13px">vs '+prevName+'</div></div>'+
+        '<div class="mg" style="grid-template-columns:repeat(2,1fr)">'+
+          mc('Δ Ingresos',(dIng>=0?'+':'')+fmt(dIng),dIng>=0?'green':'red',prevIng>0?(dIng>=0?'+':'')+Math.round(dIng/prevIng*100)+'%':'')+
+          mc('Δ Egresos',(dEgr>=0?'+':'')+fmt(dEgr),dEgr<=0?'green':'red',prevEgr>0?(dEgr>=0?'+':'')+Math.round(dEgr/prevEgr*100)+'%':'')+
+        '</div></div>';
+    }
+  }
+
+  container.innerHTML=
+    '<div class="card"><div class="card-header"><div class="card-title">Análisis del mes</div></div>'+
+      '<div class="mg" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">'+kpis+'</div>'+
+    '</div>'+
+    '<div class="card"><div class="card-header"><div class="card-title">Insights</div></div>'+
+      '<div style="display:flex;flex-direction:column;gap:8px">'+
+        insights.map(function(i){return '<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 12px;background:var(--bg3);border-radius:8px;border-left:3px solid '+i.col+'"><span style="font-size:14px;flex-shrink:0">'+i.ic+'</span><div style="font-size:13px;color:var(--text2);line-height:1.5">'+i.txt+'</div></div>';}).join('')+
+      '</div>'+
+    '</div>'+
+    '<div class="card"><div class="card-header"><div class="card-title">Desglose por categoría y subcategoría</div><div class="card-badge">'+fmt(egrR)+'</div></div>'+
+      breakHtml+
+    '</div>'+
+    compHtml;
+}
+window.toggleDetalleResumen=function(){ detalleResumenOpen=!detalleResumenOpen; renderDetalleResumen(); };
 function mc(lbl,val,cls,sub){ return '<div class="mc"><div class="mlbl">'+lbl+'</div><div class="mval '+cls+'">'+val+'</div>'+(sub?'<div class="msub">'+sub+'</div>':'')+'</div>'; }
 function catSumRow(name,val,maxV,color){
   return '<div class="cat-sumrow"><span style="width:9px;height:9px;border-radius:50%;background:'+color+';flex-shrink:0"></span>'+
