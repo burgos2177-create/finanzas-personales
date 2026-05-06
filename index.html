@@ -457,6 +457,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div id="inv-usdrate-wrap" style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;flex-wrap:wrap"></div>
         <div class="mg" id="inv-summary"></div>
         <div id="inv-list"></div>
+        <div id="inv-global-insights"></div>
         <div class="card">
           <div class="card-header"><div class="card-title">Agregar inversión</div></div>
           <div class="fg fg3">
@@ -636,6 +637,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     </main>
   </div>
   <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+  <div id="inv-hist-modal" class="quick-modal" onclick="if(event.target===this)cerrarInvHistModal()">
+    <div class="quick-modal-inner" style="max-width:960px;width:96%">
+      <div class="quick-modal-head">
+        <div class="quick-modal-title" id="inv-hist-title">📊 Histórico</div>
+        <button onclick="cerrarInvHistModal()" class="quick-modal-close">✕</button>
+      </div>
+      <div class="mg" id="inv-hist-summary" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:10px"></div>
+      <div class="bit-toolbar" id="inv-hist-ranges" style="margin-bottom:8px;justify-content:center"></div>
+      <div class="bit-toolbar" id="inv-hist-positions" style="margin-bottom:8px;justify-content:center"></div>
+      <div class="ch-wrap" style="height:300px"><canvas id="inv-hist-chart"></canvas></div>
+      <div id="inv-hist-insights" style="margin-top:14px"></div>
+    </div>
+  </div>
   <div id="ajuste-modal" class="quick-modal" onclick="if(event.target===this)cerrarAjusteModal()">
     <div class="quick-modal-inner">
       <div class="quick-modal-head">
@@ -804,6 +818,7 @@ var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionFor
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
 var totalOverlayKeys=[], showTotalLine=true, customCombos=[], ajustePending=null;
+var invHistMedioId=null, invHistRange='all', invHistHiddenPositions={}, invHistChart=null;
 var CAT_OVERLAYS={liquid:{label:'Líquidos',color:'#1fd196'},inversion:{label:'Inversiones',color:'#5b9cf6'},empresas:{label:'Empresas',color:'#9b8ef7'},fisicos:{label:'Físicos',color:'#a8d76b'},deuda:{label:'Deuda',color:'#f5a524'}};
 var detalleResumenOpen=false;
 var saveTimer=null;
@@ -2199,6 +2214,167 @@ async function fetchCryptoPrices(symbols){
     return out;
   } catch(e){ console.error('crypto',e); return {}; }
 }
+// ── Histórico de cuenta de inversión (modal) ──
+var INV_PALETTE=['#1fd196','#5b9cf6','#f5a524','#9b8ef7','#e879a8','#50c8f0','#a8d76b','#f05c5c','#50c8f0','#ffb84d','#ff6b9d','#74c2ff'];
+function colorForPos(p, idx){ return INV_PALETTE[idx%INV_PALETTE.length]; }
+window.openInvHistModal=function(medioId){
+  invHistMedioId=medioId;
+  invHistRange='all';
+  invHistHiddenPositions={};
+  document.getElementById('inv-hist-modal').classList.add('open');
+  setTimeout(renderInvHistModal,30);
+};
+window.cerrarInvHistModal=function(){
+  if(invHistChart){ invHistChart.destroy(); invHistChart=null; }
+  document.getElementById('inv-hist-modal').classList.remove('open');
+  invHistMedioId=null;
+};
+window.setInvHistRange=function(r){ invHistRange=r; renderInvHistModal(); };
+window.toggleInvHistPos=function(posId){
+  invHistHiddenPositions[posId]=!invHistHiddenPositions[posId];
+  renderInvHistModal();
+};
+function rangeStartDate(range){
+  var today=new Date();
+  switch(range){
+    case '1d': return new Date(today);
+    case '1s': var d=new Date(today); d.setDate(d.getDate()-6); return d;
+    case '15d': var d2=new Date(today); d2.setDate(d2.getDate()-14); return d2;
+    case '1m': var d3=new Date(today); d3.setMonth(d3.getMonth()-1); return d3;
+    case '3m': var d4=new Date(today); d4.setMonth(d4.getMonth()-3); return d4;
+    case '6m': var d5=new Date(today); d5.setMonth(d5.getMonth()-6); return d5;
+    case 'ytd': return new Date(today.getFullYear(),0,1);
+    case '1y': var d6=new Date(today); d6.setFullYear(d6.getFullYear()-1); return d6;
+    case '2y': var d7=new Date(today); d7.setFullYear(d7.getFullYear()-2); return d7;
+    case '5y': var d8=new Date(today); d8.setFullYear(d8.getFullYear()-5); return d8;
+    case 'all': default: return null;
+  }
+}
+function renderInvHistModal(){
+  if(!invHistMedioId) return;
+  var m=medios.find(function(x){return x.id===invHistMedioId;});
+  if(!m){ cerrarInvHistModal(); return; }
+  document.getElementById('inv-hist-title').textContent='📊 '+m.nombre+' · Histórico';
+  var positions=m.posiciones||[];
+  // Range chips
+  var ranges=[{k:'1d',l:'1D'},{k:'1s',l:'1S'},{k:'15d',l:'15D'},{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
+  document.getElementById('inv-hist-ranges').innerHTML=ranges.map(function(r){
+    return '<div class="chip '+(r.k===invHistRange?'active':'')+'" onclick="setInvHistRange(\''+r.k+'\')">'+r.l+'</div>';
+  }).join('');
+  // Position chips (toggleables)
+  document.getElementById('inv-hist-positions').innerHTML=positions.map(function(p,i){
+    var hidden=!!invHistHiddenPositions[p.id];
+    var col=colorForPos(p,i);
+    var styleC=hidden?'opacity:0.5':'background:'+col+'22;border-color:'+col+'66;color:'+col;
+    var liqTag=p.liquid?' 💧':'';
+    return '<div class="chip '+(hidden?'':'active')+'" onclick="toggleInvHistPos(\''+esc(p.id)+'\')" style="'+styleC+'">'+esc(p.nombre||(SUBTIPOS_INV[p.subtipo]||{label:p.subtipo}).label)+liqTag+'</div>';
+  }).join('');
+  // Range dates
+  var today=new Date();
+  var startDate=rangeStartDate(invHistRange);
+  if(!startDate){
+    var earliest=null;
+    positions.forEach(function(p){
+      if(p.fechaInicio){ var d=new Date(p.fechaInicio); if(!earliest||d<earliest) earliest=d; }
+      (p.historia||[]).forEach(function(h){ if(h.fecha){ var d2=new Date(h.fecha); if(!earliest||d2<earliest) earliest=d2; } });
+    });
+    startDate=earliest||new Date(today.getFullYear(),today.getMonth(),1);
+  }
+  // Construir array de fechas (resolución diaria, capada a ~365 puntos)
+  var totalDays=Math.max(1,Math.round((today-startDate)/(1000*60*60*24))+1);
+  var step=Math.max(1,Math.ceil(totalDays/365));
+  var dates=[];
+  for(var d=new Date(startDate); d<=today; ){
+    dates.push(new Date(d));
+    d.setDate(d.getDate()+step);
+  }
+  if(dates.length && isoDate(dates[dates.length-1])!==isoDate(today)) dates.push(new Date(today));
+  var useShort=['1y','2y','5y','all'].indexOf(invHistRange)>=0;
+  var labels=dates.map(function(d){var p=isoDate(d).split('-'); return useShort?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);});
+  // Datasets per visible position
+  var datasets=[];
+  positions.forEach(function(p,i){
+    if(invHistHiddenPositions[p.id]) return;
+    var col=colorForPos(p,i);
+    datasets.push({
+      label:p.nombre||(SUBTIPOS_INV[p.subtipo]||{label:p.subtipo}).label,
+      data:dates.map(function(dd){return valorPosAtDate(p,dd);}),
+      borderColor:col,backgroundColor:col+'15',
+      fill:false,tension:0.25,pointRadius:dates.length<60?2:0,pointHoverRadius:4,borderWidth:2
+    });
+  });
+  if(invHistChart){ invHistChart.destroy(); }
+  var ctx=document.getElementById('inv-hist-chart');
+  if(ctx) invHistChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:datasets.length>1,position:'top',labels:{color:'#8b90a0',font:{size:10},boxWidth:10,padding:6}},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var d=dates[i]; if(!d) return ''; return isoDate(d).split('-').reverse().join('/');},label:function(c){return c.dataset.label+': '+fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e'},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:12},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+
+  // Summary cards (cuenta totales en el periodo)
+  var firstDate=dates[0], lastDate=dates[dates.length-1];
+  var totFirst=positions.reduce(function(a,p){return a+valorPosAtDate(p,firstDate);},0);
+  var totLast=positions.reduce(function(a,p){return a+valorPosAtDate(p,lastDate);},0);
+  var aportTot=positions.reduce(function(a,p){return a+aportadoPos(p);},0);
+  var ganTot=totLast-aportTot;
+  var deltaPeriod=totLast-totFirst;
+  var pctPeriod=totFirst!==0?Math.round(deltaPeriod/Math.abs(totFirst)*10000)/100:0;
+  document.getElementById('inv-hist-summary').innerHTML=
+    mc('Aportado',fmt(aportTot),'',positions.length+' posiciones')+
+    mc('Valor actual',fmt(totLast),totLast>=aportTot?'green':'red')+
+    mc('Ganancia total',(ganTot>=0?'+':'')+fmt(ganTot),ganTot>=0?'green':'red',aportTot>0?Math.round(ganTot/aportTot*10000)/100+'%':'')+
+    mc('Δ en el periodo',(deltaPeriod>=0?'+':'')+fmt(deltaPeriod),deltaPeriod>=0?'green':'red',(pctPeriod>=0?'+':'')+pctPeriod+'%');
+
+  // Insights
+  var insights=[];
+  // Mejor / peor del periodo
+  var perfPos=positions.map(function(p){
+    var firstV=valorPosAtDate(p,firstDate);
+    var lastV=valorPosAtDate(p,lastDate);
+    var delta=lastV-firstV;
+    var pct=firstV>0?delta/firstV*100:0;
+    return {p:p,delta:delta,pct:pct,first:firstV,last:lastV};
+  }).filter(function(x){return x.first>0||x.last>0;});
+  if(perfPos.length){
+    var sortedPct=perfPos.slice().sort(function(a,b){return b.pct-a.pct;});
+    var best=sortedPct[0], worst=sortedPct[sortedPct.length-1];
+    if(best && best.pct>0.01){
+      insights.push({ic:'🏆',col:'var(--green)',txt:'Mejor del periodo: <b>'+esc(best.p.nombre||(SUBTIPOS_INV[best.p.subtipo]||{}).label)+'</b> +'+(Math.round(best.pct*100)/100)+'% ('+fmt(best.delta)+')'});
+    }
+    if(worst && worst.pct<-0.01 && worst!==best){
+      insights.push({ic:'📉',col:'var(--red)',txt:'Peor del periodo: <b>'+esc(worst.p.nombre||(SUBTIPOS_INV[worst.p.subtipo]||{}).label)+'</b> '+(Math.round(worst.pct*100)/100)+'% ('+fmt(worst.delta)+')'});
+    }
+  }
+  // Mayor por valor actual
+  var byValor=positions.slice().sort(function(a,b){return valorPos(b)-valorPos(a);});
+  if(byValor.length && valorPos(byValor[0])>0){
+    var pctConcen=totLast>0?Math.round(valorPos(byValor[0])/totLast*1000)/10:0;
+    insights.push({ic:'⭐',col:'var(--blue)',txt:'<b>'+esc(byValor[0].nombre||'')+'</b> es la posición más grande con '+fmt(valorPos(byValor[0]))+' ('+pctConcen+'% del total)'});
+  }
+  // Composición por subtipo
+  var bySubtipo={};
+  positions.forEach(function(p){ var sub=p.subtipo||'?'; bySubtipo[sub]=(bySubtipo[sub]||0)+valorPos(p); });
+  var subEntries=Object.entries(bySubtipo).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
+  if(subEntries.length>1){
+    var distTxt=subEntries.map(function(e){return (SUBTIPOS_INV[e[0]]||{label:e[0]}).label+' '+(totLast>0?Math.round(e[1]/totLast*1000)/10:0)+'%';}).join(' · ');
+    insights.push({ic:'📊',col:'var(--purple)',txt:'Distribución: '+distTxt});
+  }
+  // Líquido %
+  var liqVal=positions.filter(function(p){return p.liquid;}).reduce(function(a,p){return a+valorPos(p);},0);
+  if(liqVal>0 && totLast>0){
+    var liqPct=Math.round(liqVal/totLast*1000)/10;
+    var msg=liqPct>30?'⚠ Mucho cash sin invertir ('+liqPct+'%). Considera asignar.'
+            :liqPct<5?'✓ Casi todo invertido ('+liqPct+'% en líquido)'
+            :'💧 '+liqPct+'% en líquido ('+fmt(liqVal)+')';
+    insights.push({ic:'💧',col:'#50c8f0',txt:msg});
+  }
+  // Cambio absoluto del periodo
+  if(Math.abs(deltaPeriod)>0.01 && firstDate.getTime()!==lastDate.getTime()){
+    var dDays=Math.max(1,Math.round((lastDate-firstDate)/(1000*60*60*24)));
+    var avgDay=deltaPeriod/dDays;
+    insights.push({ic:'📈',col:deltaPeriod>=0?'var(--green)':'var(--red)',txt:'Cambio del periodo: '+(deltaPeriod>=0?'+':'')+fmt(deltaPeriod)+' ('+(pctPeriod>=0?'+':'')+pctPeriod+'%) en '+dDays+' días — promedio '+fmt(avgDay)+'/día'});
+  }
+  document.getElementById('inv-hist-insights').innerHTML=insights.length
+    ? '<div class="card-header"><div class="card-title">Insights</div></div><div style="display:flex;flex-direction:column;gap:8px">'+insights.map(function(i){return '<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 12px;background:var(--bg3);border-radius:8px;border-left:3px solid '+i.col+'"><span style="font-size:14px;flex-shrink:0">'+i.ic+'</span><div style="font-size:13px;color:var(--text2);line-height:1.5">'+i.txt+'</div></div>';}).join('')+'</div>'
+    : '<div class="empty">Sin suficientes datos para insights</div>';
+}
+
 window.refreshInvPrices=async function(medioId,btnEl){
   var m=medios.find(function(x){return x.id===medioId;});
   if(!m||m.tipo!=='Inversión') return;
@@ -3668,6 +3844,9 @@ function renderInversion(){
     var refreshBtn=hasFetchable
       ? '<button class="btn" style="padding:5px 11px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="refreshInvPrices('+m.id+',this)" title="Obtener precios en vivo y USD/MXN">🔄 Precios</button>'
       : '';
+    var histBtn=posiciones.length
+      ? '<button class="btn" style="padding:5px 11px;font-size:11px;color:var(--purple);border-color:rgba(155,142,247,0.3)" onclick="openInvHistModal('+m.id+')" title="Ver histórico con rangos e insights">📊 Histórico</button>'
+      : '';
     var head='<div class="inv-head">'+
       '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+';width:44px;height:44px;border-radius:10px;font-size:20px">'+(m.icono||'📈')+'</div>'+
       '<div style="flex:1;min-width:0">'+
@@ -3675,6 +3854,7 @@ function renderInversion(){
         '<div class="inv-sub">Aportado '+fmt(aport)+' · Actual <span style="color:'+(gan>=0?'var(--green)':'var(--red)')+';font-weight:500">'+fmt(actual)+'</span> · '+(gan>=0?'+':'')+fmt(gan)+' ('+(pctI>=0?'+':'')+pctI+'%)</div>'+
       '</div>'+
       refreshBtn+
+      histBtn+
       '<button class="btn-del" onclick="delMedio('+m.id+')">✕</button>'+
     '</div>';
 
@@ -3753,6 +3933,104 @@ function renderInversion(){
       datasets:datasets
     },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:datasets.length>1,position:'top',labels:{color:'#8b90a0',font:{size:10},boxWidth:10,padding:8}},tooltip:{callbacks:{label:function(c){return c.dataset.label+': '+fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return fmt(v);},color:'#555b6e',font:{size:10}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10}},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
   });
+
+  // Insights globales — análisis a través de todas las cuentas e inversiones
+  renderInvGlobalInsights(invs);
+}
+
+function renderInvGlobalInsights(invs){
+  var container=document.getElementById('inv-global-insights'); if(!container) return;
+  // Recopilar todas las posiciones con su cuenta
+  var allPositions=[];
+  invs.forEach(function(m){
+    (m.posiciones||[]).forEach(function(p){
+      var ap=aportadoPos(p), val=valorPos(p);
+      var gan=val-ap;
+      var pct=ap>0?(gan/ap*100):0;
+      allPositions.push({m:m,p:p,aportado:ap,valor:val,ganancia:gan,pct:pct});
+    });
+  });
+  if(!allPositions.length){ container.innerHTML=''; return; }
+  var totAport=allPositions.reduce(function(a,x){return a+x.aportado;},0);
+  var totValor=allPositions.reduce(function(a,x){return a+x.valor;},0);
+  var totGan=totValor-totAport;
+  var totPct=totAport>0?Math.round(totGan/totAport*10000)/100:0;
+  // KPIs principales
+  var kpis=
+    mc('Aportado total',fmt(totAport),'',allPositions.length+' posiciones · '+invs.length+' cuentas')+
+    mc('Valor actual',fmt(totValor),totValor>=totAport?'green':'red')+
+    mc('Ganancia neta',(totGan>=0?'+':'')+fmt(totGan),totGan>=0?'green':'red',(totPct>=0?'+':'')+totPct+'%');
+  // Mejor / peor por % de rendimiento (positivos significativos)
+  var sortedByPct=allPositions.slice().sort(function(a,b){return b.pct-a.pct;});
+  var insights=[];
+  // Mejor cuenta por valor
+  var byCuenta={};
+  invs.forEach(function(m){ byCuenta[m.id]={m:m,aportado:0,valor:0}; });
+  allPositions.forEach(function(x){ byCuenta[x.m.id].aportado+=x.aportado; byCuenta[x.m.id].valor+=x.valor; });
+  var cuentasArr=Object.values(byCuenta).filter(function(c){return c.aportado>0;}).map(function(c){c.gan=c.valor-c.aportado; c.pct=c.aportado>0?c.gan/c.aportado*100:0; return c;});
+  var bestCuenta=cuentasArr.slice().sort(function(a,b){return b.pct-a.pct;})[0];
+  if(bestCuenta && bestCuenta.pct>0.01){
+    insights.push({ic:'🏆',col:'var(--green)',txt:'Mejor cuenta del portafolio: <b>'+esc(bestCuenta.m.nombre)+'</b> con +'+(Math.round(bestCuenta.pct*100)/100)+'% ('+fmt(bestCuenta.gan)+')'});
+  }
+  var worstCuenta=cuentasArr.slice().sort(function(a,b){return a.pct-b.pct;})[0];
+  if(worstCuenta && worstCuenta.pct<-0.01 && worstCuenta!==bestCuenta){
+    insights.push({ic:'📉',col:'var(--red)',txt:'Peor cuenta del portafolio: <b>'+esc(worstCuenta.m.nombre)+'</b> con '+(Math.round(worstCuenta.pct*100)/100)+'% ('+fmt(worstCuenta.gan)+')'});
+  }
+  // Top 3 posiciones por rendimiento
+  var topPos=sortedByPct.filter(function(x){return x.aportado>0 && x.pct>0.01;}).slice(0,3);
+  if(topPos.length){
+    var topTxt=topPos.map(function(x){return '<b>'+esc(x.p.nombre||(SUBTIPOS_INV[x.p.subtipo]||{}).label)+'</b> '+(x.pct>=0?'+':'')+(Math.round(x.pct*100)/100)+'%';}).join(' · ');
+    insights.push({ic:'🚀',col:'var(--green)',txt:'Top performers: '+topTxt});
+  }
+  // Bottom posiciones
+  var worstPos=sortedByPct.filter(function(x){return x.aportado>0 && x.pct<-0.01;}).slice(-3);
+  if(worstPos.length){
+    var worstTxt=worstPos.reverse().map(function(x){return '<b>'+esc(x.p.nombre||(SUBTIPOS_INV[x.p.subtipo]||{}).label)+'</b> '+(Math.round(x.pct*100)/100)+'%';}).join(' · ');
+    insights.push({ic:'⚠',col:'var(--red)',txt:'Posiciones rezagadas: '+worstTxt});
+  }
+  // Concentración: posición más grande
+  var byValor=allPositions.slice().sort(function(a,b){return b.valor-a.valor;});
+  if(byValor.length && byValor[0].valor>0 && totValor>0){
+    var concenPct=Math.round(byValor[0].valor/totValor*1000)/10;
+    if(concenPct>30){
+      insights.push({ic:'⚖',col:'var(--amber)',txt:'<b>'+esc(byValor[0].p.nombre||'')+'</b> concentra '+concenPct+'% del portafolio. Considera diversificar.'});
+    } else {
+      insights.push({ic:'⚖',col:'var(--blue)',txt:'Posición más grande: <b>'+esc(byValor[0].p.nombre||'')+'</b> con '+concenPct+'% del total ('+fmt(byValor[0].valor)+')'});
+    }
+  }
+  // Distribución por subtipo
+  var bySubtipo={};
+  allPositions.forEach(function(x){ var s=x.p.subtipo||'?'; bySubtipo[s]=(bySubtipo[s]||0)+x.valor; });
+  var subEntries=Object.entries(bySubtipo).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
+  if(subEntries.length){
+    var distTxt=subEntries.map(function(e){return (SUBTIPOS_INV[e[0]]||{label:e[0]}).label+' '+(totValor>0?Math.round(e[1]/totValor*1000)/10:0)+'%';}).join(' · ');
+    insights.push({ic:'📊',col:'var(--purple)',txt:'Distribución por subtipo: '+distTxt});
+  }
+  // Líquido vs invertido
+  var liqVal=allPositions.filter(function(x){return x.p.liquid;}).reduce(function(a,x){return a+x.valor;},0);
+  if(liqVal>0 && totValor>0){
+    var liqPct=Math.round(liqVal/totValor*1000)/10;
+    var msg=liqPct>20?'⚠ Mucho cash sin invertir ('+liqPct+'% = '+fmt(liqVal)+'). Considera asignar a posiciones.'
+            :liqPct<3?'✓ Casi todo invertido ('+liqPct+'% en líquido)'
+            :'💧 '+liqPct+'% del portafolio en cash ('+fmt(liqVal)+')';
+    insights.push({ic:'💧',col:'#50c8f0',txt:msg});
+  }
+  // Posiciones recientes (creadas en últimos 30 días)
+  var hoy=new Date();
+  var hace30=new Date(hoy); hace30.setDate(hace30.getDate()-30);
+  var recientes=allPositions.filter(function(x){
+    if(!x.p.fechaInicio) return false;
+    return new Date(x.p.fechaInicio)>=hace30;
+  });
+  if(recientes.length){
+    var totRec=recientes.reduce(function(a,x){return a+x.aportado;},0);
+    insights.push({ic:'🆕',col:'var(--blue)',txt:'Adquirido en últimos 30 días: '+recientes.length+' posición'+(recientes.length>1?'es':'')+' por '+fmt(totRec)+' aportado'});
+  }
+  container.innerHTML=
+    '<div class="card"><div class="card-header"><div class="card-title">📋 Resumen global del portafolio</div></div>'+
+      '<div class="mg" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">'+kpis+'</div>'+
+      (insights.length?'<div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">'+insights.map(function(i){return '<div style="display:flex;align-items:flex-start;gap:8px;padding:9px 13px;background:var(--bg3);border-radius:8px;border-left:3px solid '+i.col+'"><span style="font-size:14px;flex-shrink:0">'+i.ic+'</span><div style="font-size:13px;color:var(--text2);line-height:1.5">'+i.txt+'</div></div>';}).join('')+'</div>':'')+
+    '</div>';
 }
 
 // ════════════════════════════════════════════════
