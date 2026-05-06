@@ -782,7 +782,7 @@ var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
-var totalOverlayKeys=[], showTotalLine=true;
+var totalOverlayKeys=[], showTotalLine=true, customCombos=[];
 var CAT_OVERLAYS={liquid:{label:'Líquidos',color:'#1fd196'},inversion:{label:'Inversiones',color:'#5b9cf6'},empresas:{label:'Empresas',color:'#9b8ef7'},fisicos:{label:'Físicos',color:'#a8d76b'},deuda:{label:'Deuda',color:'#f5a524'}};
 var detalleResumenOpen=false;
 var saveTimer=null;
@@ -2981,9 +2981,11 @@ window.toggleTotalOverlay=function(key){
   else totalOverlayKeys.push(key);
   renderPatrimonioTotalChart();
 };
-window.removeTotalOverlay=function(key){
+window.removeCustomCombo=function(key){
+  customCombos=customCombos.filter(function(k){return k!==key;});
   totalOverlayKeys=totalOverlayKeys.filter(function(k){return k!==key;});
-  renderPatrimonioTotalChart();
+  globalConfig.customCombos=customCombos.slice();
+  save(); renderPatrimonioTotalChart();
 };
 window.addTotalOverlayCombo=function(){
   var defaults=[{key:'liquid',label:'Líquidos'},{key:'inversion',label:'Inversiones'},{key:'empresas',label:'Empresas'},{key:'fisicos',label:'Físicos'},{key:'deuda',label:'Deuda'}];
@@ -2992,11 +2994,12 @@ window.addTotalOverlayCombo=function(){
   if(!input) return;
   var nums=input.split(',').map(function(s){return parseInt(s.trim(),10);}).filter(function(n){return n>=1&&n<=5;});
   if(nums.length<2){ toast('Selecciona al menos 2',true); return; }
-  // dedupe + sort para que el key sea determinista
   nums=Array.from(new Set(nums)).sort(function(a,b){return a-b;});
   var key=nums.map(function(n){return defaults[n-1].key;}).join('+');
+  if(customCombos.indexOf(key)===-1) customCombos.push(key);
   if(totalOverlayKeys.indexOf(key)===-1) totalOverlayKeys.push(key);
-  renderPatrimonioTotalChart();
+  globalConfig.customCombos=customCombos.slice();
+  save(); renderPatrimonioTotalChart();
 };
 window.refreshGlobal=function(){ globalCache=null; renderGlobal(); };
 
@@ -3307,10 +3310,11 @@ function renderPatrimonioTotalChart(){
       var active=totalOverlayKeys.indexOf(k)>=0;
       html+='<div class="chip '+(active?'active':'')+'" onclick="toggleTotalOverlay(\''+k+'\')" style="'+(active?'background:'+meta.color+'22;border-color:'+meta.color+'66;color:'+meta.color:'')+'">'+esc(meta.label)+'</div>';
     });
-    var customs=totalOverlayKeys.filter(function(k){return k.indexOf('+')>=0;});
-    customs.forEach(function(k){
+    customCombos.forEach(function(k){
       var col2=overlayColor(k);
-      html+='<div class="chip active" style="background:'+col2+'22;border-color:'+col2+'66;color:'+col2+';display:inline-flex;align-items:center;gap:4px">'+esc(overlayLabel(k))+'<button onclick="event.stopPropagation();removeTotalOverlay(\''+esc(k)+'\')" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;padding:0 0 0 4px;line-height:1;opacity:0.7">✕</button></div>';
+      var active=totalOverlayKeys.indexOf(k)>=0;
+      var styleC=active?'background:'+col2+'22;border-color:'+col2+'66;color:'+col2:'opacity:0.55';
+      html+='<div class="chip '+(active?'active':'')+'" onclick="toggleTotalOverlay(\''+esc(k)+'\')" style="'+styleC+';display:inline-flex;align-items:center;gap:4px;cursor:pointer">'+esc(overlayLabel(k))+'<button onclick="event.stopPropagation();removeCustomCombo(\''+esc(k)+'\')" title="Eliminar combinación" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;padding:0 0 0 4px;line-height:1;opacity:0.7">✕</button></div>';
     });
     html+='<button class="chip" onclick="addTotalOverlayCombo()" style="cursor:pointer;border-style:dashed">+ combinar</button>';
     overlaysEl.innerHTML=html;
@@ -4035,6 +4039,7 @@ window._appBoot = async function(){
     empresas = await loadGlobalFromFirestore('empresas', []);
     fisicos = await loadGlobalFromFirestore('fisicos', []);
     try { var cfgSnap=await window._getDoc(globalDocRef('config')); if(cfgSnap.exists()) globalConfig=Object.assign({usdRate:17.5},cfgSnap.data()); } catch(e){}
+    customCombos=Array.isArray(globalConfig.customCombos)?globalConfig.customCombos.slice():[];
     try { var prSnap=await window._getDoc(globalDocRef('proyeccion')); if(prSnap.exists()){ var pd=prSnap.data(); proyeccion={ingresos:pd.ingresos||[],egresos:pd.egresos||[]}; } } catch(e){}
     setupEmpresasListener(); setupFisicosListener();
     state  = await loadMesFromFirestore();
