@@ -456,7 +456,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Inversiones globales (no atadas a un mes). Los medios tipo "Inversión" aparecen aquí; configura subtipo y campos para calcular el saldo.</div>
         <div id="inv-usdrate-wrap" style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;flex-wrap:wrap"></div>
         <div class="mg" id="inv-summary"></div>
-        <div id="inv-list"></div>
+        <div class="card" style="margin-top:14px">
+          <div class="card-header"><div class="card-title">Evolución del saldo de inversión</div><div id="inv-evo-label" class="card-badge"></div></div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Reconstruido desde tus snapshots históricos. Solo el componente de Inversión.</div>
+          <div class="mg" id="inv-evo-summary" style="margin-bottom:10px"></div>
+          <div style="position:relative;height:300px"><canvas id="inv-evo-chart"></canvas></div>
+          <div id="inv-evo-ranges" class="chips" style="margin-top:10px"></div>
+        </div>
+        <div id="inv-list" style="margin-top:14px"></div>
         <div id="inv-global-insights"></div>
         <div class="card">
           <div class="card-header"><div class="card-title">Agregar inversión</div></div>
@@ -816,8 +823,8 @@ var FISICO_CATS={Auto:'🚗',Casa:'🏠',Terreno:'🏞️',Otro:'📦'};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
 var expandedEmpHist={}, expandedFisHist={};
-var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null;
-var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
+var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null, invEvoChart=null;
+var selectedWeekIdx=null, globalRange='all', totalRange='all', invEvoRange='all', globalCache=null;
 var totalOverlayKeys=[], showTotalLine=true, customCombos=[], ajustePending=null;
 var invHistMedioId=null, invHistRange='all', invHistHiddenPositions={}, invHistChart=null;
 var CAT_OVERLAYS={liquid:{label:'Líquidos',color:'#1fd196'},inversion:{label:'Inversiones',color:'#5b9cf6'},empresas:{label:'Empresas',color:'#9b8ef7'},fisicos:{label:'Físicos',color:'#a8d76b'},deuda:{label:'Deuda',color:'#f5a524'}};
@@ -4150,7 +4157,66 @@ function renderInversion(){
 
   // Insights globales — análisis a través de todas las cuentas e inversiones
   renderInvGlobalInsights(invs);
+  // Chart de evolución del saldo de inversión (mismas mecánicas que el chart global de patrimonio)
+  renderInversionEvoChart();
 }
+
+function renderInversionEvoChart(){
+  var ctx=document.getElementById('inv-evo-chart'); if(!ctx) return;
+  if(!globalCache){
+    if(!uid()) return;
+    loadAllMonthDocs().then(function(months){
+      globalCache={months:months,series:buildPatrimonioSeries(months),seriesDaily:buildPatrimonioSeriesDaily(months)};
+      renderInversionEvoChart();
+    });
+    return;
+  }
+  refreshCacheTodayPoint();
+  var seriesDaily=globalCache.seriesDaily||[];
+  var sumEl=document.getElementById('inv-evo-summary');
+  var lblEl=document.getElementById('inv-evo-label');
+  var rngEl=document.getElementById('inv-evo-ranges');
+  if(!seriesDaily.length){
+    if(sumEl) sumEl.innerHTML='<div class="empty" style="grid-column:1/-1">Sin datos históricos. Guarda al menos un mes para ver la evolución.</div>';
+    if(lblEl) lblEl.textContent='';
+    if(rngEl) rngEl.innerHTML='';
+    return;
+  }
+  var ranges=[{k:'1d',l:'1D'},{k:'1s',l:'1S'},{k:'15d',l:'15D'},{k:'1m',l:'1M'},{k:'3m',l:'3M'},{k:'6m',l:'6M'},{k:'ytd',l:'YTD'},{k:'1y',l:'1A'},{k:'2y',l:'2A'},{k:'5y',l:'5A'},{k:'all',l:'TODO'}];
+  if(rngEl) rngEl.innerHTML=ranges.map(function(r){return '<div class="chip '+(r.k===invEvoRange?'active':'')+'" onclick="setInvEvoRange(\''+r.k+'\')">'+r.l+'</div>';}).join('');
+  var filteredDaily=filterSeriesByRange(seriesDaily, invEvoRange);
+  if(!filteredDaily.length) filteredDaily=[seriesDaily[seriesDaily.length-1]];
+  var first=filteredDaily[0], last=filteredDaily[filteredDaily.length-1];
+  var current=last.inversion, start=first.inversion;
+  var change=current-start;
+  var changePct=start!==0?Math.round(change/Math.abs(start)*10000)/100:0;
+  var rangeLbl=ranges.find(function(r){return r.k===invEvoRange;});
+  if(lblEl) lblEl.textContent=fmt(current)+' · '+(rangeLbl?rangeLbl.l:'')+': '+(change>=0?'+':'')+fmt(change)+' ('+(changePct>=0?'+':'')+changePct+'%)';
+  // KPIs
+  var maxV=Math.max.apply(null,filteredDaily.map(function(s){return s.inversion;}));
+  var minV=Math.min.apply(null,filteredDaily.map(function(s){return s.inversion;}));
+  var peak=filteredDaily[0].inversion, ddMax=0;
+  filteredDaily.forEach(function(s){ if(s.inversion>peak) peak=s.inversion; var dd=peak>0?(s.inversion-peak)/peak*100:0; if(dd<ddMax) ddMax=dd; });
+  if(sumEl) sumEl.innerHTML=
+    mc('Saldo actual',fmt(current),current<0?'red':'blue',last.date)+
+    mc('Cambio',(change>=0?'+':'')+fmt(change),change>=0?'green':'red','en '+(rangeLbl?rangeLbl.l:'rango'))+
+    mc('Variación %',(changePct>=0?'+':'')+changePct+'%',changePct>=0?'green':'red','desde '+first.date)+
+    mc('Drawdown máx',Math.round(ddMax*100)/100+'%',ddMax<-10?'red':'amber','desde pico');
+  // Render
+  if(invEvoChart) invEvoChart.destroy();
+  var useShortFmt=(invEvoRange==='1y'||invEvoRange==='2y'||invEvoRange==='5y'||invEvoRange==='all');
+  var labels=filteredDaily.map(function(s){var p=s.date.split('-'); return useShortFmt?(p[1]+'/'+p[0].slice(2)):(p[2]+'/'+p[1]);});
+  var rangeTicks={'1d':1,'1s':7,'15d':10,'1m':10,'3m':9,'6m':7,'ytd':10,'1y':12,'2y':10,'5y':10,'all':12};
+  var maxTicks=rangeTicks[invEvoRange]||12;
+  var n=filteredDaily.length;
+  var ptR=n<31?2.5:(n<92?1.2:(n<366?0.6:0));
+  var col=change>=0?'#5b9cf6':'#f05c5c';
+  var bgcol=change>=0?'rgba(91,156,246,0.12)':'rgba(240,92,92,0.1)';
+  invEvoChart=new Chart(ctx,{type:'line',data:{labels:labels,datasets:[
+    {label:'Inversión',data:filteredDaily.map(function(s){return s.inversion;}),borderColor:col,backgroundColor:bgcol,fill:true,tension:0.25,pointRadius:ptR,pointHoverRadius:4,pointBackgroundColor:col,borderWidth:2}
+  ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:function(items){var i=items[0]?items[0].dataIndex:0; var s=filteredDaily[i]; if(!s) return ''; var p=s.date.split('-'); return p[2]+'/'+p[1]+'/'+p[0];},label:function(c){return fmt(c.raw);}}}},scales:{y:{ticks:{callback:function(v){return '$'+Math.round(v/1000)+'k';},color:'#555b6e',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'},border:{color:'transparent'}},x:{ticks:{color:'#8b90a0',font:{size:10},maxRotation:0,autoSkip:true,maxTicksLimit:maxTicks},grid:{display:false},border:{color:'rgba(255,255,255,0.06)'}}}}});
+}
+window.setInvEvoRange=function(r){ invEvoRange=r; renderInversionEvoChart(); };
 
 function renderInvGlobalInsights(invs){
   var container=document.getElementById('inv-global-insights'); if(!container) return;
