@@ -839,6 +839,82 @@ function syncStatus(s){
   else if(s==='offline'){dot.classList.add('offline');lbl.textContent='Sin conexión';}
 }
 
+// ── Historia: utilidades de merge resiliente ─────────────────────
+// La historia de saldos (empresas, físicos) es CRÍTICA y nunca debe
+// achicarse. Se hace merge unión por fecha (entrada con `ts` más reciente
+// gana en colisión) y se respaldan en localStorage + un doc Firestore
+// dedicado (*_hist) que el writer externo no toca.
+function unionHistoriaArr(a, b){
+  var byDate={};
+  function consider(h){
+    if(!h || !h.fecha) return;
+    var ex=byDate[h.fecha];
+    if(!ex){ byDate[h.fecha]=h; return; }
+    var ts1=h.ts||'', ts2=ex.ts||'';
+    if(ts1>ts2) byDate[h.fecha]=h;
+  }
+  (a||[]).forEach(consider);
+  (b||[]).forEach(consider);
+  return Object.keys(byDate).sort().map(function(k){return byDate[k];});
+}
+function setHistEntry(hist, fecha, valKey, val, ts){
+  hist=hist||[];
+  var existing=null;
+  for(var i=0;i<hist.length;i++){ if(hist[i].fecha===fecha){ existing=hist[i]; break; } }
+  if(existing){
+    existing[valKey]=val;
+    if(ts) existing.ts=ts;
+  } else {
+    var entry={fecha:fecha, ts:ts||(fecha+'T00:00:00.000Z')};
+    entry[valKey]=val;
+    hist.push(entry);
+  }
+  hist.sort(function(a,b){return (a.fecha||'').localeCompare(b.fecha||'');});
+  return hist;
+}
+function localHistKey(type){ return 'fnz_hist_'+(uid()||'anon')+'_'+type; }
+function saveHistoriaLocal(type, items){
+  try {
+    var data={};
+    items.forEach(function(it){ if(it && it.id && Array.isArray(it.historia) && it.historia.length) data[it.id]=it.historia; });
+    localStorage.setItem(localHistKey(type), JSON.stringify(data));
+  } catch(e){}
+}
+function loadHistoriaLocal(type){
+  try {
+    var raw=localStorage.getItem(localHistKey(type));
+    if(!raw) return {};
+    return JSON.parse(raw)||{};
+  } catch(e){ return {}; }
+}
+async function loadHistoriaFs(type){
+  try {
+    var snap = await window._getDoc(globalDocRef(type+'_hist'));
+    if(snap.exists()){ var d=snap.data(); return d.byId||{}; }
+  } catch(e){}
+  return {};
+}
+function saveHistoriaFs(type, items){
+  if(!uid()) return Promise.resolve();
+  var byId={};
+  items.forEach(function(it){
+    if(it && it.id && Array.isArray(it.historia) && it.historia.length) byId[it.id]=it.historia;
+  });
+  try { return window._setDoc(globalDocRef(type+'_hist'), {byId:byId, updated:new Date().toISOString()}); }
+  catch(e){ return Promise.resolve(); }
+}
+function applyHistSources(items, sources){
+  // sources: array of {byId} maps. Union'ea cada historia con todas las fuentes.
+  items.forEach(function(it){
+    if(!it || !it.id) return;
+    var combined = Array.isArray(it.historia) ? it.historia.slice() : [];
+    sources.forEach(function(src){
+      if(src && Array.isArray(src[it.id])) combined = unionHistoriaArr(combined, src[it.id]);
+    });
+    it.historia = combined;
+  });
+}
+
 // ── Save to Firestore (debounced 800ms) ──
 function save(skipDelay, keepCache){
   if(saveTimer) clearTimeout(saveTimer);
@@ -857,7 +933,12 @@ function save(skipDelay, keepCache){
     var p7 = window._setDoc(globalDocRef('empresas'), {list: empresas});
     var p8 = window._setDoc(globalDocRef('fisicos'), {list: fisicos});
     var p9 = window._setDoc(globalDocRef('proyeccion'), proyeccion);
-    Promise.all([p1,p2,p3,p4,p5,p6,p7,p8,p9])
+    // Backups dedicados de historia (no son tocados por writers externos)
+    var p10 = saveHistoriaFs('empresas', empresas);
+    var p11 = saveHistoriaFs('fisicos', fisicos);
+    saveHistoriaLocal('empresas', empresas);
+    saveHistoriaLocal('fisicos', fisicos);
+    Promise.all([p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11])
       .then(function(){ syncStatus('ok'); })
       .catch(function(e){ console.error(e); syncStatus('error'); toast('Error al guardar',true); });
   }, delay);
@@ -3331,29 +3412,48 @@ function setupEmpresasListener(){
       if(!snap.exists()) return;
       var newList=snap.data().list||[];
       if(JSON.stringify(empresas)===JSON.stringify(newList)) return;
-      // Merge historia: preserva la log local y appendea snapshot si el saldo cambió
+      // Merge historia con UNIÓN por fecha (nunca pierde entradas). Si un writer
+      // externo omite la historia, conservamos la local. Si la incluye, la unimos.
       var nowIso=new Date().toISOString();
+      var todayStr=nowIso.slice(0,10);
+      var ystr=new Date(Date.now()-86400000).toISOString().slice(0,10);
       var anyAppended=false;
       newList.forEach(function(newE){
         var oldE=empresas.find(function(x){return x.id===newE.id;});
         var preservedHist=oldE && Array.isArray(oldE.historia)?oldE.historia.slice():[];
         var externalHist=Array.isArray(newE.historia)?newE.historia:null;
-        var hist=preservedHist;
-        if(externalHist && externalHist.length>preservedHist.length) hist=externalHist.slice();
+        var hist=unionHistoriaArr(preservedHist, externalHist||[]);
         if(typeof newE.saldo==='number'){
-          var lastEntry=hist.length?hist[hist.length-1]:null;
-          var lastSaldo=lastEntry?lastEntry.saldo:null;
+          // Si hay fluctuación hoy y NO existe entrada previa a hoy, anclamos
+          // ayer con el saldo viejo para que el chart muestre la transición
+          // y no aplane todo al valor nuevo.
+          if(oldE && typeof oldE.saldo==='number' && Math.abs(newE.saldo-oldE.saldo)>0.005){
+            var hasPreToday=hist.some(function(h){return h.fecha && h.fecha<todayStr;});
+            if(!hasPreToday){
+              setHistEntry(hist, ystr, 'saldo', oldE.saldo, ystr+'T12:00:00.000Z');
+              anyAppended=true;
+            }
+          }
+          // Lookup la entrada de hoy (no la última del array, porque puede haber
+          // sido reordenada por la unión)
+          var todayEntry=null;
+          for(var i=0;i<hist.length;i++){ if(hist[i].fecha===todayStr) todayEntry=hist[i]; }
+          var lastSaldo=todayEntry?todayEntry.saldo:(hist.length?hist[hist.length-1].saldo:null);
           if(lastSaldo===null || Math.abs(newE.saldo-lastSaldo)>0.005){
-            hist.push({fecha:nowIso.slice(0,10),ts:nowIso,saldo:newE.saldo});
+            setHistEntry(hist, todayStr, 'saldo', newE.saldo, nowIso);
             anyAppended=true;
           }
         }
+        // Forzamos lastUpdate fresco para evitar que un writer externo con
+        // timestamp viejo confunda valorEmpresaAtDate y aplane el chart.
+        newE.lastUpdate=nowIso;
         newE.historia=hist;
       });
       empresas=newList;
       globalCache=null;
       // Persist merged history back so future loads tienen el log completo
       if(anyAppended){ save(false,true); }
+      saveHistoriaLocal('empresas', empresas);
       var sec=document.getElementById('s-global');
       if(sec && sec.classList.contains('active')) renderGlobal();
     });
@@ -3426,15 +3526,21 @@ window.updEmpresa=function(id,f,v){
   var e=empresas.find(function(x){return x.id===id;}); if(!e) return;
   if(f==='saldo') v=parseFloat(v)||0;
   if(f==='nombre'){ var nv=(v||'').trim(); if(!nv){ renderEmpresasSection(); return; } if(empresas.find(function(o){return o.id!==e.id && o.nombre.toLowerCase()===nv.toLowerCase();})){ toast('Nombre ya existe',true); renderEmpresasSection(); return; } v=nv; }
+  var oldSaldo=(f==='saldo')?(typeof e.saldo==='number'?e.saldo:null):null;
   e[f]=v;
   e.source='manual';
-  e.lastUpdate=new Date().toISOString();
+  var nowIso=new Date().toISOString();
+  e.lastUpdate=nowIso;
   if(f==='saldo'){
     if(!e.historia) e.historia=[];
-    var hoy=new Date().toISOString().slice(0,10);
-    var last=e.historia[e.historia.length-1];
-    if(last && last.fecha===hoy) last.saldo=v;
-    else e.historia.push({fecha:hoy,saldo:v});
+    var hoy=nowIso.slice(0,10);
+    var ystr=new Date(Date.now()-86400000).toISOString().slice(0,10);
+    // Inject yesterday-anchor on first fluctuation today si no hay historia previa
+    if(oldSaldo!==null && Math.abs(v-oldSaldo)>0.005){
+      var hasPreToday=e.historia.some(function(h){return h.fecha && h.fecha<hoy;});
+      if(!hasPreToday) setHistEntry(e.historia, ystr, 'saldo', oldSaldo, ystr+'T12:00:00.000Z');
+    }
+    setHistEntry(e.historia, hoy, 'saldo', v, nowIso);
   }
   save(); renderEmpresasSection();
 };
@@ -3457,26 +3563,37 @@ function setupFisicosListener(){
       var newList=snap.data().list||[];
       if(JSON.stringify(fisicos)===JSON.stringify(newList)) return;
       var nowIso=new Date().toISOString();
+      var todayStr=nowIso.slice(0,10);
+      var ystr=new Date(Date.now()-86400000).toISOString().slice(0,10);
       var anyAppended=false;
       newList.forEach(function(newF){
         var oldF=fisicos.find(function(x){return x.id===newF.id;});
         var preservedHist=oldF && Array.isArray(oldF.historia)?oldF.historia.slice():[];
         var externalHist=Array.isArray(newF.historia)?newF.historia:null;
-        var hist=preservedHist;
-        if(externalHist && externalHist.length>preservedHist.length) hist=externalHist.slice();
+        var hist=unionHistoriaArr(preservedHist, externalHist||[]);
         if(typeof newF.valor==='number'){
-          var lastEntry=hist.length?hist[hist.length-1]:null;
-          var lastVal=lastEntry?lastEntry.valor:null;
+          if(oldF && typeof oldF.valor==='number' && Math.abs(newF.valor-oldF.valor)>0.005){
+            var hasPreToday=hist.some(function(h){return h.fecha && h.fecha<todayStr;});
+            if(!hasPreToday){
+              setHistEntry(hist, ystr, 'valor', oldF.valor, ystr+'T12:00:00.000Z');
+              anyAppended=true;
+            }
+          }
+          var todayEntry=null;
+          for(var i=0;i<hist.length;i++){ if(hist[i].fecha===todayStr) todayEntry=hist[i]; }
+          var lastVal=todayEntry?todayEntry.valor:(hist.length?hist[hist.length-1].valor:null);
           if(lastVal===null || Math.abs(newF.valor-lastVal)>0.005){
-            hist.push({fecha:nowIso.slice(0,10),ts:nowIso,valor:newF.valor});
+            setHistEntry(hist, todayStr, 'valor', newF.valor, nowIso);
             anyAppended=true;
           }
         }
+        newF.lastUpdate=nowIso;
         newF.historia=hist;
       });
       fisicos=newList;
       globalCache=null;
       if(anyAppended){ save(false,true); }
+      saveHistoriaLocal('fisicos', fisicos);
       var sec=document.getElementById('s-global');
       if(sec && sec.classList.contains('active')) renderGlobal();
     });
@@ -3560,6 +3677,7 @@ window.updFisico=function(id,f,v){
   var x=fisicos.find(function(o){return o.id===id;}); if(!x) return;
   if(f==='valor'||f==='tasaAnual') v=parseFloat(v)||0;
   if(f==='nombre'){ var nv=(v||'').trim(); if(!nv){ renderFisicosSection(); return; } v=nv; }
+  var oldVal=(f==='valor')?(typeof x.valor==='number'?x.valor:null):null;
   x[f]=v;
   var hoy=new Date().toISOString();
   x.lastUpdate=hoy;
@@ -3568,9 +3686,12 @@ window.updFisico=function(id,f,v){
     x.fechaBase=hoy;
     if(!x.historia) x.historia=[];
     var hoyD=hoy.slice(0,10);
-    var last=x.historia[x.historia.length-1];
-    if(last && last.fecha===hoyD) last.valor=v;
-    else x.historia.push({fecha:hoyD,valor:v});
+    var ystr=new Date(Date.now()-86400000).toISOString().slice(0,10);
+    if(oldVal!==null && Math.abs(v-oldVal)>0.005){
+      var hasPreToday=x.historia.some(function(h){return h.fecha && h.fecha<hoyD;});
+      if(!hasPreToday) setHistEntry(x.historia, ystr, 'valor', oldVal, ystr+'T12:00:00.000Z');
+    }
+    setHistEntry(x.historia, hoyD, 'valor', v, hoy);
   }
   save(); renderFisicosSection(); renderCategoriasChart();
 };
@@ -4656,6 +4777,17 @@ window._appBoot = async function(){
     compras = await loadGlobalFromFirestore('compras', []);
     empresas = await loadGlobalFromFirestore('empresas', []);
     fisicos = await loadGlobalFromFirestore('fisicos', []);
+    // Restaura historia desde backups dedicados (Firestore + localStorage). Union por fecha
+    // con la entrada del doc principal, así cualquier escritor externo que omita historia
+    // no pueda truncar el log.
+    try {
+      var empHistFs = await loadHistoriaFs('empresas');
+      var fisHistFs = await loadHistoriaFs('fisicos');
+      var empHistLocal = loadHistoriaLocal('empresas');
+      var fisHistLocal = loadHistoriaLocal('fisicos');
+      applyHistSources(empresas, [empHistFs, empHistLocal]);
+      applyHistSources(fisicos, [fisHistFs, fisHistLocal]);
+    } catch(e){ console.warn('No se pudo restaurar historia:', e); }
     try { var cfgSnap=await window._getDoc(globalDocRef('config')); if(cfgSnap.exists()) globalConfig=Object.assign({usdRate:17.5},cfgSnap.data()); } catch(e){}
     customCombos=Array.isArray(globalConfig.customCombos)?globalConfig.customCombos.slice():[];
     try { var prSnap=await window._getDoc(globalDocRef('proyeccion')); if(prSnap.exists()){ var pd=prSnap.data(); proyeccion={ingresos:pd.ingresos||[],egresos:pd.egresos||[]}; } } catch(e){}
