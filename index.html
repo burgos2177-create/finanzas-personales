@@ -815,6 +815,7 @@ var state={}, subs=[], cats=[], medios=[], compras=[], empresas=[], fisicos=[], 
 var FISICO_CATS={Auto:'🚗',Casa:'🏠',Terreno:'🏞️',Otro:'📦'};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
+var expandedEmpHist={}, expandedFisHist={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', globalCache=null;
 var totalOverlayKeys=[], showTotalLine=true, customCombos=[], ajustePending=null;
@@ -3472,6 +3473,30 @@ function renderEmpresasSection(){
       var lu=e.lastUpdate?new Date(e.lastUpdate):null;
       var luTxt=lu?lu.toLocaleString('es-MX',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
       var srcBadge=e.source==='external'?'<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:5px;background:rgba(91,156,246,0.15);color:var(--blue);letter-spacing:0.04em;margin-left:6px">EXTERNO</span>':'';
+      var histArr=Array.isArray(e.historia)?e.historia.slice().sort(function(a,b){return (b.fecha||'').localeCompare(a.fecha||'');}):[];
+      var histOpen=!!expandedEmpHist[e.id];
+      var histBtnLbl=histArr.length?('Histórico ('+histArr.length+')'):'Histórico';
+      var histPanel='';
+      if(histOpen){
+        var rows=histArr.length?histArr.map(function(h){
+          var sMxn=(h.saldo||0)*(e.moneda==='USD'?getUsdRate():1);
+          return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg);border-radius:5px;font-family:var(--mono);font-size:12px">'+
+            '<span style="color:var(--text2);min-width:90px">'+esc(h.fecha||'?')+'</span>'+
+            '<input type="number" value="'+(h.saldo||0)+'" step="0.01" onchange="updEmpHistEntry(\''+esc(e.id)+'\',\''+esc(h.fecha)+'\',this.value)" style="flex:1;min-width:90px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:12px;padding:3px 6px;outline:none;text-align:right">'+
+            (e.moneda==='USD'?'<span style="color:var(--text3);min-width:90px;text-align:right">≈ '+fmt(sMxn)+'</span>':'')+
+            '<button class="btn-del" style="font-size:11px;padding:2px 7px" onclick="delEmpHistEntry(\''+esc(e.id)+'\',\''+esc(h.fecha)+'\')">✕</button>'+
+          '</div>';
+        }).join(''):'<div class="empty" style="padding:8px;font-size:11px">Sin entradas históricas. Agrega una abajo.</div>';
+        histPanel='<div style="margin-top:8px;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px">'+
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
+            '<input type="date" id="emp-hist-fecha-'+esc(e.id)+'" style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 7px;outline:none">'+
+            '<input type="number" id="emp-hist-saldo-'+esc(e.id)+'" step="0.01" placeholder="Saldo" style="flex:1;min-width:120px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 7px;outline:none;text-align:right">'+
+            '<button class="btn" style="padding:4px 10px;font-size:12px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="addEmpHistEntry(\''+esc(e.id)+'\')">+ Agregar fecha</button>'+
+          '</div>'+
+          '<div style="display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto">'+rows+'</div>'+
+          '<div style="font-size:10px;color:var(--text3);margin-top:6px">Edita el saldo de una fecha tipeando el nuevo valor. Estas entradas afectan la gráfica de patrimonio total.</div>'+
+        '</div>';
+      }
       return '<div class="mp-card" style="flex-direction:column;align-items:stretch;gap:8px">'+
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
           '<div class="mp-icon" style="background:'+(e.color||'#9b8ef7')+'22;color:'+(e.color||'#9b8ef7')+'">🏢</div>'+
@@ -3485,8 +3510,10 @@ function renderEmpresasSection(){
           '</div>'+
           (e.moneda==='USD'?'<div style="font-size:11px;color:var(--text3);font-family:var(--mono);min-width:100px;text-align:right">≈ '+fmt(saldoMxn)+' MXN</div>':'')+
           '<input type="color" value="'+(e.color||'#9b8ef7')+'" onchange="updEmpresa(\''+esc(e.id)+'\',\'color\',this.value)" style="width:24px;height:24px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0">'+
+          '<button class="btn" style="padding:4px 9px;font-size:11px;color:var(--purple);border-color:rgba(155,142,247,0.3)" onclick="toggleEmpHist(\''+esc(e.id)+'\')" title="Editar entradas históricas de saldo">📜 '+histBtnLbl+(histOpen?' ▲':' ▼')+'</button>'+
           '<button class="btn-del" onclick="delEmpresa(\''+esc(e.id)+'\')">✕</button>'+
         '</div>'+
+        histPanel+
       '</div>';
     }).join('');
   }
@@ -3550,6 +3577,42 @@ window.delEmpresa=function(id){
   empresas=empresas.filter(function(x){return x.id!==id;});
   save(); renderEmpresasSection();
   toast('Empresa eliminada');
+};
+// ── Edición manual de historia de empresa (para sembrar / corregir puntos del chart) ──
+window.toggleEmpHist=function(id){
+  expandedEmpHist[id]=!expandedEmpHist[id];
+  renderEmpresasSection();
+};
+window.addEmpHistEntry=function(id){
+  var e=empresas.find(function(x){return x.id===id;}); if(!e) return;
+  var fEl=document.getElementById('emp-hist-fecha-'+id), sEl=document.getElementById('emp-hist-saldo-'+id);
+  var fecha=fEl?fEl.value:'';
+  var saldoRaw=sEl?sEl.value:'';
+  if(!fecha){ toast('Falta fecha',true); return; }
+  if(saldoRaw===''||isNaN(parseFloat(saldoRaw))){ toast('Falta saldo',true); return; }
+  var saldo=parseFloat(saldoRaw);
+  if(!Array.isArray(e.historia)) e.historia=[];
+  setHistEntry(e.historia, fecha, 'saldo', saldo, fecha+'T12:00:00.000Z');
+  globalCache=null;
+  save(); renderEmpresasSection();
+  toast('Entrada del '+fecha+' agregada');
+};
+window.updEmpHistEntry=function(id,fecha,v){
+  var e=empresas.find(function(x){return x.id===id;}); if(!e||!Array.isArray(e.historia)) return;
+  var nv=parseFloat(v); if(isNaN(nv)) return;
+  for(var i=0;i<e.historia.length;i++){
+    if(e.historia[i].fecha===fecha){ e.historia[i].saldo=nv; e.historia[i].ts=new Date().toISOString(); break; }
+  }
+  globalCache=null;
+  save(); renderEmpresasSection();
+};
+window.delEmpHistEntry=function(id,fecha){
+  var e=empresas.find(function(x){return x.id===id;}); if(!e||!Array.isArray(e.historia)) return;
+  if(!confirm('¿Eliminar entrada del '+fecha+'?')) return;
+  e.historia=e.historia.filter(function(h){return h.fecha!==fecha;});
+  globalCache=null;
+  save(); renderEmpresasSection();
+  toast('Entrada eliminada');
 };
 
 // ── Activos físicos: listener + CRUD ──
