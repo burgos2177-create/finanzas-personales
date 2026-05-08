@@ -3769,13 +3769,18 @@ window.delFisico=function(id){
 // ── Patrimonio por categoría: chart con las 5 categorías ──
 function computeCategoriaTotals(){
   var liquido=0, deuda=0, inv=0;
-  // Use the latest month from cache if it's more recent than the currently-viewed month;
-  // fall back to state. Ensures the chart reflects the freshest saldos available.
+  // Global debe reflejar "hoy". Si el usuario está viendo el mes actual real,
+  // usamos `state` (que es ese mismo mes en memoria) — así Saldos y Global
+  // computan exactamente con los mismos datos. Solo cuando navega a otro mes
+  // intentamos buscar el doc del mes actual real en cache; nunca usamos un
+  // mes futuro/posterior que pueda existir como doc vacío en Firestore.
   var sourceData=state;
+  var todayD=new Date();
+  var todayKey=todayD.getFullYear()*12+todayD.getMonth();
   var currentKey=parseInt(currentAnio,10)*12+MESES.indexOf(currentMes);
-  if(globalCache && globalCache.months && globalCache.months.length){
-    var latest=globalCache.months[globalCache.months.length-1];
-    if((latest.anio*12+latest.mes) > currentKey) sourceData=latest.data;
+  if(currentKey!==todayKey && globalCache && globalCache.months && globalCache.months.length){
+    var todayMonth=globalCache.months.find(function(x){return (x.anio*12+x.mes)===todayKey;});
+    if(todayMonth) sourceData=todayMonth.data;
   }
   var saldosIni=sourceData.saldosIniciales||{};
   var mov={};
