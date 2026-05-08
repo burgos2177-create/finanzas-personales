@@ -1258,6 +1258,35 @@ window.quickEntrySubmit=function(){
 };
 window.nav = nav;
 
+// ── Migración: pagos TC viejos guardados como ingreso/egreso → transfer ──
+// Antes registrábamos cada pago TC como un par (egreso desde origen,
+// ingreso a la TC), lo que inflaba los abonos del resumen semanal y
+// los ingresos/egresos del mes. Ahora son transferencias. Esta función
+// detecta pares legacy (cat='Pago TC' con transferId compartido) y los
+// convierte in-place. Solo afecta el mes actualmente cargado en `state`.
+function migratePagoTcToTransfer(){
+  if(!state || !Array.isArray(state.gastos)) return false;
+  var byTid={};
+  state.gastos.forEach(function(g){
+    if(g.cat!=='Pago TC' || !g.transferId) return;
+    if(g.tipo!=='ingreso' && g.tipo!=='egreso') return;
+    if(!byTid[g.transferId]) byTid[g.transferId]=[];
+    byTid[g.transferId].push(g);
+  });
+  var changed=false;
+  Object.keys(byTid).forEach(function(tid){
+    var pair=byTid[tid];
+    if(pair.length!==2) return;
+    var egr=pair.find(function(g){return g.tipo==='egreso';});
+    var ing=pair.find(function(g){return g.tipo==='ingreso';});
+    if(!egr||!ing) return;
+    egr.tipo='transfer'; egr.direccion='out';
+    ing.tipo='transfer'; ing.direccion='in';
+    changed=true;
+  });
+  return changed;
+}
+
 async function changeMes(){
   currentMes=document.getElementById('mes-select').value;
   currentAnio=document.getElementById('anio-select').value;
@@ -1266,6 +1295,7 @@ async function changeMes(){
   syncStatus('saving');
   state = await loadMesFromFirestore();
   var changed=syncLinkedEgresosToSubs();
+  if(migratePagoTcToTransfer()) changed=true;
   syncStatus('ok');
   if(lastLoadInherited){
     toast('Mes copiado de '+(lastInheritedFrom||'mes anterior'));
@@ -4409,8 +4439,12 @@ window.realizarPagoTC=function(fromMedioId){
   var tid='t'+(state.nextId++);
   var fecha=defaultFechaForViewedMonth();
   if(!state.gastos) state.gastos=[];
-  state.gastos.push({id:state.nextId++,tipo:'egreso',desc:'Pago TC '+to.nombre,cat:'Pago TC',mp:from.nombre,monto:monto,fecha:fecha,transferId:tid});
-  state.gastos.push({id:state.nextId++,tipo:'ingreso',desc:'Abono desde '+from.nombre,cat:'Pago TC',mp:to.nombre,monto:monto,fecha:fecha,transferId:tid});
+  // Registrar como TRANSFERENCIA (no ingreso/egreso). renderSaldos ya cuenta
+  // trfIn como abono al saldo de TC y trfOut como salida del mp origen, y los
+  // resúmenes (semanal, bitácora, charts) ignoran tipo='transfer' al sumar
+  // flujo. Así un pago TC no se contabiliza como un nuevo ingreso/egreso.
+  state.gastos.push({id:state.nextId++,tipo:'transfer',direccion:'out',desc:'Pago TC '+to.nombre,cat:'Pago TC',mp:from.nombre,monto:monto,fecha:fecha,transferId:tid});
+  state.gastos.push({id:state.nextId++,tipo:'transfer',direccion:'in',desc:'Abono desde '+from.nombre,cat:'Pago TC',mp:to.nombre,monto:monto,fecha:fecha,transferId:tid});
   document.getElementById('ptc-monto-'+fromMedioId).value='';
   save(); renderSaldos(); renderBitacora(); renderResumen();
   toast('Pago de TC registrado');
@@ -4931,6 +4965,7 @@ window._appBoot = async function(){
     if(!state.nextId) state.nextId=200;
     if(!state.saldosIniciales) state.saldosIniciales={};
     var changed=syncLinkedEgresosToSubs();
+    if(migratePagoTcToTransfer()) changed=true;
     syncStatus('ok');
     if(lastLoadInherited){
       toast('Mes copiado de '+(lastInheritedFrom||'mes anterior'));
