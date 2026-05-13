@@ -822,7 +822,7 @@ var state={}, subs=[], cats=[], medios=[], compras=[], empresas=[], fisicos=[], 
 var FISICO_CATS={Auto:'🚗',Casa:'🏠',Terreno:'🏞️',Otro:'📦'};
 var bitFilterCat='Todos', bitFilterMP='Todos', bitFilterTipo='Todos';
 var expandedMps={}, advancedTC={}, expandedAddPos={}, adjustingPos={}, actionForm={};
-var expandedEmpHist={}, expandedFisHist={};
+var expandedEmpHist={}, expandedFisHist={}, expandedPosHist={};
 var flujoChart=null, cuentasChart=null, bitChart=null, weeklyChart=null, globalChart=null, globalCompChart=null, catChart=null, totalChart=null, proyChart=null, detallePieChart=null, invEvoChart=null;
 var selectedWeekIdx=null, globalRange='all', totalRange='all', invEvoRange='all', globalCache=null;
 var totalOverlayKeys=[], showTotalLine=true, customCombos=[], ajustePending=null;
@@ -2613,7 +2613,7 @@ window.refreshInvPrices=async function(medioId,btnEl){
       if(price!==null && !isNaN(price)){
         var oldV=valorPos(p);
         p.precioActual=Math.round(price*10000)/10000;
-        if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p);
+        if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p, oldV);
         updated++;
       } else { failed.push(p.ticker); }
     } else if(p.subtipo==='Cripto' && p.simbolo){
@@ -2621,7 +2621,7 @@ window.refreshInvPrices=async function(medioId,btnEl){
       if(typeof price2==='number'){
         var oldV2=valorPos(p);
         p.precioActual=Math.round(price2*100000000)/100000000;
-        if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p);
+        if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p, oldV2);
         updated++;
       } else { failed.push(p.simbolo); }
     }
@@ -2644,11 +2644,7 @@ window.updPos=function(medioId,posId,f,v){
   else p[f]=v;
   var newV=valorPos(p);
   if(Math.abs(newV-oldV)>0.01){
-    if(!p.historia) p.historia=[];
-    var hoy=new Date().toISOString().slice(0,10);
-    var last=p.historia[p.historia.length-1];
-    if(last && last.fecha===hoy) last.valor=newV;
-    else p.historia.push({fecha:hoy,valor:newV});
+    appendHistoriaPos(p, oldV);
   }
   save(); renderInversion(); renderSaldos(); renderResumen();
 };
@@ -2661,13 +2657,57 @@ window.delPos=function(medioId,posId){
 };
 window.toggleAddPos=function(medioId){ expandedAddPos[medioId]=!expandedAddPos[medioId]; renderInversion(); };
 window.toggleAdjustPos=function(posId){ adjustingPos[posId]=!adjustingPos[posId]; renderInversion(); };
-function appendHistoriaPos(p){
+window.togglePosHist=function(posId){ expandedPosHist[posId]=!expandedPosHist[posId]; renderInversion(); };
+window.addPosHistEntry=function(medioId, posId){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p) return;
+  var fEl=document.getElementById('pos-hist-fecha-'+posId), vEl=document.getElementById('pos-hist-valor-'+posId);
+  var fecha=fEl?fEl.value:'';
+  var valRaw=vEl?vEl.value:'';
+  if(!fecha){ toast('Falta fecha',true); return; }
+  if(valRaw===''||isNaN(parseFloat(valRaw))){ toast('Falta valor',true); return; }
+  var valor=parseFloat(valRaw);
+  if(!Array.isArray(p.historia)) p.historia=[];
+  setHistEntry(p.historia, fecha, 'valor', valor, fecha+'T12:00:00.000Z');
+  globalCache=null;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Entrada del '+fecha+' agregada');
+};
+window.updPosHistEntry=function(medioId, posId, fecha, v){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p||!Array.isArray(p.historia)) return;
+  var nv=parseFloat(v); if(isNaN(nv)) return;
+  for(var i=0;i<p.historia.length;i++){
+    if(p.historia[i].fecha===fecha){ p.historia[i].valor=nv; p.historia[i].ts=new Date().toISOString(); break; }
+  }
+  globalCache=null;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+};
+window.delPosHistEntry=function(medioId, posId, fecha){
+  var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
+  var p=(m.posiciones||[]).find(function(x){return x.id===posId;}); if(!p||!Array.isArray(p.historia)) return;
+  if(!confirm('¿Eliminar entrada del '+fecha+'?')) return;
+  p.historia=p.historia.filter(function(h){return h.fecha!==fecha;});
+  globalCache=null;
+  save(); renderInversion(); renderSaldos(); renderResumen();
+  toast('Entrada eliminada');
+};
+function appendHistoriaPos(p, oldValBefore){
   if(!p.historia) p.historia=[];
-  var hoy=new Date().toISOString().slice(0,10);
+  var nowIso=new Date().toISOString();
+  var hoy=nowIso.slice(0,10);
   var v=valorPos(p);
-  var last=p.historia[p.historia.length-1];
-  if(last && last.fecha===hoy) last.valor=v;
-  else p.historia.push({fecha:hoy,valor:v});
+  // En la primera fluctuación del día, si NO hay ninguna entrada previa a hoy,
+  // anclamos ayer con el valor anterior (oldValBefore) para que el chart
+  // muestre la transición real ayer→hoy en vez de aplanar todo al valor nuevo.
+  if(typeof oldValBefore==='number' && Math.abs(v-oldValBefore)>0.005){
+    var hasPreToday=p.historia.some(function(h){return h.fecha && h.fecha<hoy;});
+    if(!hasPreToday){
+      var ystr=new Date(Date.now()-86400000).toISOString().slice(0,10);
+      setHistEntry(p.historia, ystr, 'valor', oldValBefore, ystr+'T12:00:00.000Z');
+    }
+  }
+  setHistEntry(p.historia, hoy, 'valor', v, nowIso);
 }
 function ensureLotes(p){
   if(p.lotes && p.lotes.length) return;
@@ -3178,14 +3218,21 @@ async function loadAllMonthDocs(){
 }
 function valorPosAtDate(p, dateRef){
   if(p.subtipo==='PF'||p.subtipo==='TF') return valorBase(p, dateRef)+getAjusteTotal(p);
-  // Para Acciones/Cripto/RV: anclar al valor de mercado actual.
-  // No tenemos snapshots diarios reales (precios + tipo de cambio); historia[]
-  // típicamente solo tiene cost basis en fechaInicio + valor actual hoy. Usar
-  // los entries directos crearía saltos entre cost basis y mercado actual que
-  // distorsionan el chart. Anclar al valor actual da una serie consistente.
+  // Para Acciones/Cripto/RV: usamos la historia como serie temporal real.
+  // Cada refresh de precios (o edición manual) appendea/actualiza la entrada
+  // del día en p.historia. Para fechas pasadas, tomamos la entrada más
+  // reciente con fecha ≤ dateRef. Si no hay ninguna anterior, fallback al
+  // valor actual (anclar al presente evita saltos absurdos cuando no hay
+  // datos históricos).
   var dStr=typeof dateRef==='string'?dateRef:isoDate(dateRef);
   var fechaInicioStr=p.fechaInicio||null;
-  if(fechaInicioStr && dStr<fechaInicioStr) return 0; // posición no adquirida aún en esta fecha
+  if(fechaInicioStr && dStr<fechaInicioStr) return 0; // no adquirida aún
+  var hist=p.historia||[];
+  var best=null;
+  for(var i=0;i<hist.length;i++){
+    if((hist[i].fecha||'')<=dStr){ if(!best||hist[i].fecha>=best.fecha) best=hist[i]; }
+  }
+  if(best && typeof best.valor==='number') return best.valor;
   return valorPos(p);
 }
 function snapshotAtMonthEnd(month){
@@ -4096,6 +4143,29 @@ function posCardHtml(medioId,p){
   var pctP=ap>0?Math.round(gan/ap*10000)/100:0;
   var canAct=(st==='Acciones'||st==='Cripto'||st==='RV');
   var current=actionForm[p.id];
+  // Panel de historia editable (idéntico al de empresas: agregar/editar/borrar)
+  var histArr=Array.isArray(p.historia)?p.historia.slice().sort(function(a,b){return (b.fecha||'').localeCompare(a.fecha||'');}):[];
+  var histOpen=!!expandedPosHist[p.id];
+  var histBtnLbl=histArr.length?('Historia ('+histArr.length+')'):'Historia';
+  var histPanel='';
+  if(histOpen){
+    var rows=histArr.length?histArr.map(function(h){
+      return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg);border-radius:5px;font-family:var(--mono);font-size:12px">'+
+        '<span style="color:var(--text2);min-width:90px">'+esc(h.fecha||'?')+'</span>'+
+        '<input type="number" value="'+(h.valor||0)+'" step="0.01" onchange="updPosHistEntry('+medioId+',\''+esc(p.id)+'\',\''+esc(h.fecha)+'\',this.value)" style="flex:1;min-width:90px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:12px;padding:3px 6px;outline:none;text-align:right">'+
+        '<button class="btn-del" style="font-size:11px;padding:2px 7px" onclick="delPosHistEntry('+medioId+',\''+esc(p.id)+'\',\''+esc(h.fecha)+'\')">✕</button>'+
+      '</div>';
+    }).join(''):'<div class="empty" style="padding:8px;font-size:11px">Sin historia. Agrega una entrada o haz refresh de precios.</div>';
+    histPanel='<div style="margin-top:8px;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px">'+
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
+        '<input type="date" id="pos-hist-fecha-'+esc(p.id)+'" style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 7px;outline:none">'+
+        '<input type="number" id="pos-hist-valor-'+esc(p.id)+'" step="0.01" placeholder="Valor" style="flex:1;min-width:120px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-family:var(--mono);font-size:12px;padding:4px 7px;outline:none;text-align:right">'+
+        '<button class="btn" style="padding:4px 10px;font-size:12px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="addPosHistEntry('+medioId+',\''+esc(p.id)+'\')">+ Agregar fecha</button>'+
+      '</div>'+
+      '<div style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto">'+rows+'</div>'+
+      '<div style="font-size:10px;color:var(--text3);margin-top:6px">Cada refresh de precios appendea/actualiza la entrada del día. Edita aquí el valor de cualquier fecha o elimina entradas erróneas. Afecta el chart Histórico de esta cuenta y el de evolución de inversión.</div>'+
+    '</div>';
+  }
   var actionsHtml='';
   if(canAct){
     if(p.liquid){
@@ -4124,10 +4194,12 @@ function posCardHtml(medioId,p){
       '<input class="editable" value="'+esc(p.grupo||'')+'" placeholder="Grupo (opcional)" style="font-size:11px;color:var(--text3);min-width:80px;max-width:160px" onblur="updPos('+medioId+',\''+p.id+'\',\'grupo\',this.value)" title="Subcuenta o grupo">'+
       '<div style="flex:1;min-width:10px"></div>'+
       '<div style="font-size:12px;font-family:var(--mono);color:'+(gan>=0?'var(--green)':'var(--red)')+';white-space:nowrap">'+fmt(val)+' ('+(pctP>=0?'+':'')+pctP+'%)</div>'+
+      '<button class="btn" style="padding:3px 8px;font-size:11px;color:var(--purple);border-color:rgba(155,142,247,0.3)" onclick="togglePosHist(\''+p.id+'\')" title="Editar entradas de historia de esta posición">📜 '+histBtnLbl+(histOpen?' ▲':' ▼')+'</button>'+
       '<button class="btn-del" onclick="delPos('+medioId+',\''+p.id+'\')">✕</button>'+
     '</div>'+
     posDetailsHtml(medioId,p)+
     actionsHtml+
+    histPanel+
   '</div>';
 }
 function renderInversion(){
