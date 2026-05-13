@@ -1784,6 +1784,19 @@ window.delEgreso=function(id){ state.egresos=state.egresos.filter(function(e){re
 // ════════════════════════════════════════════════
 //  DISTRIBUCIÓN
 // ════════════════════════════════════════════════
+function gastadoDist(d){
+  var links=d.linkedCats||[];
+  if(!links.length) return 0;
+  return (state.gastos||[]).filter(function(g){
+    if((g.tipo||'egreso')!=='egreso') return false;
+    return links.some(function(link){
+      var parts=link.split('|');
+      if(g.cat!==parts[0]) return false;
+      if(parts[1] && (g.subcat||'')!==parts[1]) return false;
+      return true;
+    });
+  }).reduce(function(a,g){return a+g.monto;},0);
+}
 function renderDist(){
   document.getElementById('lbl-dist').innerHTML=mesLabel();
   var disp=disponible(),totPct=state.distribucion.reduce(function(a,d){return a+d.pct;},0),restPct=100-totPct;
@@ -1793,19 +1806,77 @@ function renderDist(){
     mc('Sin Asignar',Math.max(restPct,0)+'% · '+fmt(disp*Math.max(restPct,0)/100),restPct<0?'red':'');
   drawDistBar('dist-bar-section',null,false);
   var html=state.distribucion.map(function(d,i){
-    return '<div class="row"><span style="width:10px;height:10px;border-radius:2px;background:'+DIST_COLORS[i%DIST_COLORS.length]+';flex-shrink:0"></span>'+
-      '<div class="row-main">'+edt(d.cat,'max-width:220px','updDist('+d.id+',\'cat\',this.value)')+'</div>'+
-      '<input class="editable editable-pct" type="number" value="'+d.pct+'" min="0" max="100" onblur="updDist('+d.id+',\'pct\',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()">'+
-      '<span style="font-size:11px;color:var(--text3)">%</span>'+
-      '<div class="row-amount" style="color:var(--amber);min-width:80px;text-align:right">'+fmt(disp*d.pct/100)+'</div>'+
-      '<button class="btn-del" onclick="delDist('+d.id+')">✕</button></div>';
+    var presup=disp*d.pct/100;
+    var links=d.linkedCats||[];
+    var hasLinks=links.length>0;
+    var gastadoVal=hasLinks?gastadoDist(d):0;
+    var pctUsed=presup>0?Math.round(gastadoVal/presup*100):0;
+    var cls=pctUsed>=100?'over':pctUsed>=80?'warn':'';
+    var color=DIST_COLORS[i%DIST_COLORS.length];
+    // Chips de cada vínculo
+    var chipsHtml=links.map(function(link){
+      var parts=link.split('|');
+      var lbl=parts[0]+(parts[1]?' › '+parts[1]:'');
+      return '<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--blue);background:rgba(91,156,246,0.12);padding:3px 8px;border-radius:5px">'+esc(lbl)+'<button onclick="removeDistCatLink('+d.id+',\''+esc(link).replace(/'/g,"\\'")+'\')" style="background:none;border:none;color:inherit;cursor:pointer;font-size:11px;padding:0;line-height:1;opacity:0.6;margin-left:2px" title="Quitar este vínculo">✕</button></span>';
+    }).join('');
+    // Dropdown para agregar vínculo
+    var addOpts='<option value="">+ vincular cat/sub</option>';
+    cats.filter(function(c){return !c.parentId;}).forEach(function(parent){
+      if(links.indexOf(parent.nombre)===-1){
+        addOpts+='<option value="'+esc(parent.nombre)+'">'+esc(parent.nombre)+'</option>';
+      }
+      cats.filter(function(c){return c.parentId===parent.id;}).forEach(function(s){
+        var val=parent.nombre+'|'+s.nombre;
+        if(links.indexOf(val)===-1){
+          addOpts+='<option value="'+esc(val)+'">↳ '+esc(parent.nombre)+' › '+esc(s.nombre)+'</option>';
+        }
+      });
+    });
+    var linkBadge=hasLinks?'<span style="font-size:10px;color:var(--blue);background:rgba(91,156,246,0.12);padding:2px 7px;border-radius:5px;margin-left:6px;letter-spacing:0.04em" title="'+esc(links.map(function(l){return l.replace('|',' › ');}).join(', '))+'">AUTO ('+links.length+')</span>':'';
+    var progressRow=hasLinks
+      ? '<div style="display:flex;align-items:center;gap:8px;padding-left:18px;flex-wrap:wrap;margin-top:2px">'+
+          '<span style="font-size:11px;color:var(--text3);width:60px;flex-shrink:0">Gastado:</span>'+
+          '<span style="font-size:12px;font-family:var(--mono);color:'+(pctUsed>=100?'var(--red)':pctUsed>=80?'var(--amber)':'var(--text2)')+';min-width:75px">'+fmt(gastadoVal)+'</span>'+
+          '<span style="font-size:11px;font-family:var(--mono);color:'+(pctUsed>=100?'var(--red)':pctUsed>=80?'var(--amber)':'var(--text3)')+';flex-shrink:0;min-width:40px">'+pctUsed+'%</span>'+
+          '<div style="flex:1;min-width:80px"><div class="prog-track"><div class="prog-fill '+cls+'" style="width:'+Math.min(pctUsed,100)+'%"></div></div></div>'+
+        '</div>'
+      : '';
+    var linksRow='<div style="display:flex;align-items:center;gap:6px;padding-left:18px;flex-wrap:wrap;margin-top:2px">'+
+        '<span style="font-size:11px;color:var(--text3);width:60px;flex-shrink:0">Vínculos:</span>'+
+        (chipsHtml?'<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">'+chipsHtml+'</div>':'')+
+        '<select class="sel-inline" onchange="addDistCatLink('+d.id+',this.value);this.value=\'\'" title="Agregar vínculo a cat/subcat para trackear gasto real">'+addOpts+'</select>'+
+      '</div>';
+    return '<div class="row" style="flex-direction:column;align-items:stretch;gap:4px;padding-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:8px">'+
+        '<span style="width:10px;height:10px;border-radius:2px;background:'+color+';flex-shrink:0"></span>'+
+        '<div class="row-main">'+edt(d.cat,'max-width:220px','updDist('+d.id+',\'cat\',this.value)')+linkBadge+'</div>'+
+        '<input class="editable editable-pct" type="number" value="'+d.pct+'" min="0" max="100" onblur="updDist('+d.id+',\'pct\',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()">'+
+        '<span style="font-size:11px;color:var(--text3)">%</span>'+
+        '<div class="row-amount" style="color:var(--amber);min-width:80px;text-align:right">'+fmt(presup)+'</div>'+
+        '<button class="btn-del" onclick="delDist('+d.id+')">✕</button>'+
+      '</div>'+
+      linksRow+
+      progressRow+
+    '</div>';
   }).join('');
   if(totPct>100) html+='<div class="alert alert-danger" style="margin-top:12px">⚠ Total supera 100%.</div>';
   document.getElementById('dist-list').innerHTML=html;
 }
 window.updDist=function(id,f,v){ var o=state.distribucion.find(function(d){return d.id===id;}); if(!o) return; if(f==='pct') o.pct=parseFloat(v)||0; else o[f]=(v||'').trim()||o[f]; save(); renderDist(); };
-window.addDist=function(){ var c=document.getElementById('dist-cat').value.trim(),p=parseFloat(document.getElementById('dist-pct-in').value)||0; if(!c||!p) return; state.distribucion.push({id:state.nextId++,cat:c,pct:p}); document.getElementById('dist-cat').value=''; document.getElementById('dist-pct-in').value=''; save(); renderDist(); toast('Categoría agregada'); };
+window.addDist=function(){ var c=document.getElementById('dist-cat').value.trim(),p=parseFloat(document.getElementById('dist-pct-in').value)||0; if(!c||!p) return; state.distribucion.push({id:state.nextId++,cat:c,pct:p,linkedCats:[]}); document.getElementById('dist-cat').value=''; document.getElementById('dist-pct-in').value=''; save(); renderDist(); toast('Categoría agregada'); };
 window.delDist=function(id){ state.distribucion=state.distribucion.filter(function(d){return d.id!==id;}); save(); renderDist(); toast('Eliminado'); };
+window.addDistCatLink=function(id,val){
+  if(!val) return;
+  var o=state.distribucion.find(function(d){return d.id===id;}); if(!o) return;
+  if(!o.linkedCats) o.linkedCats=[];
+  if(o.linkedCats.indexOf(val)===-1) o.linkedCats.push(val);
+  save(); renderDist(); renderResumen();
+};
+window.removeDistCatLink=function(id,val){
+  var o=state.distribucion.find(function(d){return d.id===id;}); if(!o) return;
+  if(o.linkedCats) o.linkedCats=o.linkedCats.filter(function(x){return x!==val;});
+  save(); renderDist(); renderResumen();
+};
 
 // ════════════════════════════════════════════════
 //  BITÁCORA
