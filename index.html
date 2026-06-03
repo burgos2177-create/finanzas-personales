@@ -709,7 +709,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <!-- Firebase -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+         setPersistence, browserLocalPersistence, signOut as fbSignOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
@@ -733,7 +734,22 @@ window._auth = auth;
 window._db   = db;
 window._GoogleAuthProvider = GoogleAuthProvider;
 window._signInWithPopup    = signInWithPopup;
+window._signInWithRedirect = signInWithRedirect;
 window._fbSignOut          = fbSignOut;
+
+// Persistencia local: necesaria para que el flujo de redirect (Ferdium/Electron)
+// retenga la sesión al volver de Google.
+setPersistence(auth, browserLocalPersistence).catch(function(){});
+
+// Completa cualquier inicio de sesión por redirect pendiente (Ferdium/Electron).
+// Si Google rechaza el OAuth en el webview embebido, muestra el motivo real.
+getRedirectResult(auth).catch(function(err){
+  var el = document.getElementById('login-error');
+  if (el){
+    el.textContent = 'Error al iniciar sesión: ' + (err && err.code ? err.code : 'desconocido') + '. Intenta de nuevo.';
+    el.style.display = 'block';
+  }
+});
 window._doc    = doc;
 window._getDoc = getDoc;
 window._setDoc = setDoc;
@@ -1050,9 +1066,33 @@ function toast(msg, isErr){
 
 // Auth wrappers
 window.signInGoogle = function(){
-  document.getElementById('login-error').style.display='none';
-  window._signInWithPopup(window._auth, new window._GoogleAuthProvider())
-    .catch(function(){ document.getElementById('login-error').style.display='block'; });
+  var errEl = document.getElementById('login-error');
+  errEl.style.display='none';
+  var provider = new window._GoogleAuthProvider();
+  provider.setCustomParameters({ prompt:'select_account' });
+
+  // En navegadores normales (Opera) el popup da la mejor UX. En Ferdium
+  // (Electron/webview) el popup queda bloqueado: caemos a signInWithRedirect.
+  window._signInWithPopup(window._auth, provider)
+    .catch(function(err){
+      var code = err && err.code ? err.code : '';
+      var popupFalla =
+        code === 'auth/popup-blocked' ||
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        code === 'auth/internal-error' ||
+        code === 'auth/network-request-failed';
+      if (popupFalla){
+        // Fallback: navegación completa del webview a Google y de vuelta.
+        return window._signInWithRedirect(window._auth, provider);
+      }
+      throw err;
+    })
+    .catch(function(err){
+      errEl.textContent = 'Error al iniciar sesión: ' + (err && err.code ? err.code : 'desconocido') + '. Intenta de nuevo.';
+      errEl.style.display='block';
+    });
 };
 window.signOut = function(){
   window._fbSignOut(window._auth).catch(function(){});
