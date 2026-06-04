@@ -366,7 +366,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
       <!-- SALDOS -->
       <div id="s-saldos" class="section">
-        <div class="s-heading">Saldos <span id="lbl-saldos"></span></div>
+        <div class="s-heading" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <span>Saldos <span id="lbl-saldos"></span></span>
+          <button class="btn" style="font-size:12px;padding:6px 12px;font-weight:500" onclick="recalcSaldosIniciales()" title="Vuelve a heredar el saldo inicial desde el saldo final del mes anterior (corrige la continuidad)">↻ Recalcular saldos iniciales</button>
+        </div>
         <div class="alert alert-warn" style="margin-bottom:14px"><span>💡</span> Configura saldo inicial o línea de crédito. Usa los botones rápidos para registrar cargos/abonos sin ir a Bitácora.</div>
         <div class="mg" id="saldos-summary"></div>
         <div id="saldos-list"></div>
@@ -999,6 +1002,32 @@ function save(skipDelay, keepCache){
 }
 
 // ── Load from Firestore ──
+// Arrastra el saldo final del mes anterior como saldo inicial del siguiente.
+// Misma fórmula que el saldo en vivo (renderSaldos): respeta la dirección de
+// las transferencias — las entrantes SUMAN y las salientes RESTAN.
+function carrySaldosFrom(prevData){
+  var prevMov={};
+  (prevData.gastos||[]).forEach(function(g){
+    if(!g.mp) return;
+    if(!prevMov[g.mp]) prevMov[g.mp]={ing:0,egr:0,trfIn:0,trfOut:0};
+    if(g.tipo==='transfer'){
+      if(g.direccion==='in') prevMov[g.mp].trfIn+=g.monto; else prevMov[g.mp].trfOut+=g.monto;
+    } else if((g.tipo||'egreso')==='ingreso'){ prevMov[g.mp].ing+=g.monto; }
+    else { prevMov[g.mp].egr+=g.monto; }
+  });
+  var out={};
+  var prevIni=prevData.saldosIniciales||{};
+  medios.forEach(function(med){
+    var ini=prevIni[med.nombre]||0;
+    var mv=prevMov[med.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0};
+    var fin = med.tipo==='Crédito'
+      ? ini+mv.egr+mv.trfOut-mv.ing-mv.trfIn
+      : ini+mv.ing+mv.trfIn-mv.egr-mv.trfOut;
+    fin=Math.round(fin*100)/100;
+    if(fin!==0) out[med.nombre]=fin;
+  });
+  return out;
+}
 async function findLatestMonthBefore(anio, mesName){
   var coll = window._collection(window._db, 'usuarios', uid(), 'meses');
   var snap = await window._getDocs(coll);
@@ -1035,22 +1064,8 @@ async function loadMesFromFirestore(){
       var subsT=totSubsMes();
       var egresos=(prev.data.egresos||[]).map(function(o){bump(o); var c=JSON.parse(JSON.stringify(o)); c.gastado=0; if(c.linkedToSubs) c.presup=subsT; return c;});
       var distribucion=(prev.data.distribucion||[]).map(function(o){bump(o); return JSON.parse(JSON.stringify(o));});
-      // Calcular saldos finales del mes anterior y arrastrarlos como iniciales
-      var prevMov={};
-      (prev.data.gastos||[]).forEach(function(g){
-        if(!g.mp) return;
-        if(!prevMov[g.mp]) prevMov[g.mp]={ing:0,egr:0};
-        if((g.tipo||'egreso')==='ingreso') prevMov[g.mp].ing+=g.monto; else prevMov[g.mp].egr+=g.monto;
-      });
-      var newSaldosIni={};
-      var prevIni=prev.data.saldosIniciales||{};
-      medios.forEach(function(med){
-        var ini=prevIni[med.nombre]||0;
-        var mv=prevMov[med.nombre]||{ing:0,egr:0};
-        var fin = med.tipo==='Crédito' ? ini+mv.egr-mv.ing : ini+mv.ing-mv.egr;
-        fin=Math.round(fin*100)/100;
-        if(fin!==0) newSaldosIni[med.nombre]=fin;
-      });
+      // Arrastra los saldos finales del mes anterior como iniciales (respeta transferencias).
+      var newSaldosIni=carrySaldosFrom(prev.data);
       return { ingresos:ingresos, egresos:egresos, distribucion:distribucion, gastos:[], saldosIniciales:newSaldosIni, nextId:maxId };
     }
   } catch(e) { console.error('Error heredando mes anterior:',e); }
@@ -5077,6 +5092,33 @@ window.setSaldoInicial=function(nombre,v){
   if(!state.saldosIniciales) state.saldosIniciales={};
   state.saldosIniciales[nombre]=parseFloat(v)||0;
   save(); renderSaldos();
+};
+// Vuelve a heredar el saldo inicial desde el saldo final del mes anterior,
+// usando la fórmula corregida. Repara meses ya creados con arrastre antiguo.
+window.recalcSaldosIniciales=async function(){
+  try{
+    var prev=await findLatestMonthBefore(currentAnio, currentMes);
+    if(!prev){ toast('No hay un mes anterior del cual heredar', true); return; }
+    var pp=prev.id.split('_'); var prevLabel=(pp[1]||'')+' '+(pp[0]||'');
+    var nuevos=carrySaldosFrom(prev.data);
+    // Vista previa de los cambios respecto a lo que hay ahora.
+    var actuales=state.saldosIniciales||{};
+    var nombres={}; medios.forEach(function(m){nombres[m.nombre]=1;});
+    Object.keys(actuales).forEach(function(k){nombres[k]=1;});
+    Object.keys(nuevos).forEach(function(k){nombres[k]=1;});
+    var cambios=[];
+    Object.keys(nombres).forEach(function(n){
+      var a=Math.round((actuales[n]||0)*100)/100, b=Math.round((nuevos[n]||0)*100)/100;
+      if(a!==b) cambios.push('• '+n+': '+fmtDec(a)+'  →  '+fmtDec(b));
+    });
+    if(!cambios.length){ toast('Los saldos iniciales ya coinciden con '+prevLabel); return; }
+    var msg='Recalcular saldos iniciales de '+currentMes+' '+currentAnio+' heredando el saldo final de '+prevLabel+'.\n\n'+
+            cambios.join('\n')+'\n\nEsto SOBRESCRIBE los saldos iniciales actuales del mes. ¿Continuar?';
+    if(!confirm(msg)) return;
+    state.saldosIniciales=nuevos;
+    save(); renderSaldos(); renderResumen();
+    toast('Saldos iniciales recalculados desde '+prevLabel);
+  }catch(e){ console.error('Error al recalcular saldos iniciales:',e); toast('Error al recalcular', true); }
 };
 
 // ════════════════════════════════════════════════
