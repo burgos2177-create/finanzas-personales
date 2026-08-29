@@ -2516,9 +2516,16 @@ window.addPosicion=function(medioId){
   toast('Posición agregada');
 };
 // ── Fetch de precios en vivo ──
+// fetch con timeout: si un endpoint/proxy no responde, se aborta y NO cuelga
+// la actualización (antes un proxy sin respuesta dejaba el botón en "Cargando…").
+function fetchWithTimeout(url, ms){
+  var ctrl=new AbortController();
+  var t=setTimeout(function(){ ctrl.abort(); }, ms||8000);
+  return fetch(url,{signal:ctrl.signal}).finally(function(){ clearTimeout(t); });
+}
 async function fetchUsdMxn(){
   try {
-    var r=await fetch('https://api.frankfurter.app/latest?from=USD&to=MXN');
+    var r=await fetchWithTimeout('https://api.frankfurter.app/latest?from=USD&to=MXN',8000);
     var d=await r.json();
     return d && d.rates && d.rates.MXN ? d.rates.MXN : null;
   } catch(e){ console.error('fx',e); return null; }
@@ -2539,7 +2546,7 @@ async function fetchStockPrice(ticker){
   ];
   for(var i=0;i<proxies.length;i++){
     try{
-      var r=await fetch(proxies[i]);
+      var r=await fetchWithTimeout(proxies[i],8000);
       if(!r.ok) continue;
       var d=await r.json();
       if(d && d.chart && d.chart.result && d.chart.result[0] && d.chart.result[0].meta){
@@ -2556,7 +2563,7 @@ async function fetchCryptoPrices(symbols){
   var ids=symbols.map(function(s){return CRYPTO_IDS[s.toUpperCase()]||s.toLowerCase();});
   var unique=Array.from(new Set(ids));
   try {
-    var r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+unique.join(',')+'&vs_currencies=usd');
+    var r=await fetchWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids='+unique.join(',')+'&vs_currencies=usd',8000);
     var d=await r.json();
     var out={};
     symbols.forEach(function(s){
@@ -2755,38 +2762,46 @@ window.refreshInvPrices=async function(medioId,btnEl){
   if(!m||m.tipo!=='Inversión') return;
   var positions=m.posiciones||[];
   if(btnEl){ btnEl.disabled=true; btnEl.textContent='⏳ Cargando…'; }
-  // 1) USD/MXN
-  var rate=await fetchUsdMxn();
-  if(rate){ globalConfig.usdRate=Math.round(rate*10000)/10000; }
-  // 2) Crypto en batch (excluyendo posiciones líquidas)
-  var cryptoSymbols=positions.filter(function(p){return p.subtipo==='Cripto'&&p.simbolo&&!p.liquid;}).map(function(p){return p.simbolo;});
-  var cryptoPrices=cryptoSymbols.length?await fetchCryptoPrices(cryptoSymbols):{};
-  // 3) Stocks individuales (excluyendo líquidos)
-  var updated=0, failed=[];
-  for(var i=0;i<positions.length;i++){
-    var p=positions[i];
-    if(p.liquid) continue;
-    if(p.subtipo==='Acciones' && p.ticker){
-      var price=await fetchStockPrice(p.ticker);
-      if(price!==null && !isNaN(price)){
-        var oldV=valorPos(p);
-        p.precioActual=Math.round(price*10000)/10000;
-        if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p, oldV);
-        updated++;
-      } else { failed.push(p.ticker); }
-    } else if(p.subtipo==='Cripto' && p.simbolo){
-      var price2=cryptoPrices[p.simbolo.toUpperCase()];
-      if(typeof price2==='number'){
-        var oldV2=valorPos(p);
-        p.precioActual=Math.round(price2*100000000)/100000000;
-        if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p, oldV2);
-        updated++;
-      } else { failed.push(p.simbolo); }
+  var rate=null, updated=0, failed=[];
+  try {
+    // 1) USD/MXN
+    rate=await fetchUsdMxn();
+    if(rate){ globalConfig.usdRate=Math.round(rate*10000)/10000; }
+    // 2) Crypto en batch (excluyendo posiciones líquidas)
+    var cryptoSymbols=positions.filter(function(p){return p.subtipo==='Cripto'&&p.simbolo&&!p.liquid;}).map(function(p){return p.simbolo;});
+    var cryptoPrices=cryptoSymbols.length?await fetchCryptoPrices(cryptoSymbols):{};
+    // 3) Stocks individuales (excluyendo líquidos)
+    for(var i=0;i<positions.length;i++){
+      var p=positions[i];
+      if(p.liquid) continue;
+      if(p.subtipo==='Acciones' && p.ticker){
+        var price=await fetchStockPrice(p.ticker);
+        if(price!==null && !isNaN(price)){
+          var oldV=valorPos(p);
+          p.precioActual=Math.round(price*10000)/10000;
+          if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p, oldV);
+          updated++;
+        } else { failed.push(p.ticker); }
+      } else if(p.subtipo==='Cripto' && p.simbolo){
+        var price2=cryptoPrices[p.simbolo.toUpperCase()];
+        if(typeof price2==='number'){
+          var oldV2=valorPos(p);
+          p.precioActual=Math.round(price2*100000000)/100000000;
+          if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p, oldV2);
+          updated++;
+        } else { failed.push(p.simbolo); }
+      }
     }
+    save(); renderInversion(); renderSaldos(); renderResumen();
+    if(failed.length) toast('Actualizadas '+updated+' · sin datos: '+failed.join(', '), failed.length>updated);
+    else toast('Actualizadas '+updated+' posiciones'+(rate?' (USD '+globalConfig.usdRate+')':''));
+  } catch(e){
+    console.error('refreshInvPrices',e);
+    toast('Error al actualizar precios', true);
+  } finally {
+    // renderInversion() ya recrea el botón, pero si algo falló antes, lo reseteamos.
+    if(btnEl){ btnEl.disabled=false; btnEl.textContent='🔄 Precios'; }
   }
-  save(); renderInversion(); renderSaldos(); renderResumen();
-  if(failed.length) toast('Actualizadas '+updated+' · sin datos: '+failed.join(', '), failed.length>updated);
-  else toast('Actualizadas '+updated+' posiciones'+(rate?' (USD '+globalConfig.usdRate+')':''));
 };
 
 window.updPos=function(medioId,posId,f,v){
