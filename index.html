@@ -2526,16 +2526,30 @@ async function fetchUsdMxn(){
 async function fetchStockPrice(ticker){
   if(!ticker) return null;
   var t=ticker.trim().toUpperCase();
-  try {
-    var url='https://corsproxy.io/?url='+encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/'+t);
-    var r=await fetch(url);
-    if(!r.ok) return null;
-    var d=await r.json();
-    if(d && d.chart && d.chart.result && d.chart.result[0] && d.chart.result[0].meta){
-      return d.chart.result[0].meta.regularMarketPrice||null;
-    }
-    return null;
-  } catch(e){ console.error('stock '+t,e); return null; }
+  // Yahoo Finance (cubre US, ETFs y BMV con sufijo .MX) no envía cabeceras CORS,
+  // así que se accede vía un proxy. Se prueban varios en cadena para que la
+  // caída de uno (p.ej. corsproxy.io dejó de atender orígenes no registrados)
+  // no rompa la actualización de precios.
+  var target='https://query1.finance.yahoo.com/v8/finance/chart/'+encodeURIComponent(t);
+  var proxies=[
+    'https://api.allorigins.win/raw?url='+encodeURIComponent(target),
+    'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(target),
+    'https://corsproxy.io/?url='+encodeURIComponent(target),
+    'https://thingproxy.freeboard.io/fetch/'+target
+  ];
+  for(var i=0;i<proxies.length;i++){
+    try{
+      var r=await fetch(proxies[i]);
+      if(!r.ok) continue;
+      var d=await r.json();
+      if(d && d.chart && d.chart.result && d.chart.result[0] && d.chart.result[0].meta){
+        var price=d.chart.result[0].meta.regularMarketPrice;
+        if(price!==null && price!==undefined && !isNaN(price)) return price;
+      }
+    }catch(e){ /* proxy caído o respuesta no-JSON → probar el siguiente */ }
+  }
+  console.error('stock '+t+': ningún proxy devolvió datos');
+  return null;
 }
 async function fetchCryptoPrices(symbols){
   if(!symbols.length) return {};
