@@ -2541,12 +2541,11 @@ async function fetchStockPrice(ticker){
   var proxies=[
     'https://api.allorigins.win/raw?url='+encodeURIComponent(target),
     'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(target),
-    'https://corsproxy.io/?url='+encodeURIComponent(target),
-    'https://thingproxy.freeboard.io/fetch/'+target
+    'https://corsproxy.io/?url='+encodeURIComponent(target)
   ];
   for(var i=0;i<proxies.length;i++){
     try{
-      var r=await fetchWithTimeout(proxies[i],8000);
+      var r=await fetchWithTimeout(proxies[i],6000);
       if(!r.ok) continue;
       var d=await r.json();
       if(d && d.chart && d.chart.result && d.chart.result[0] && d.chart.result[0].meta){
@@ -2770,28 +2769,30 @@ window.refreshInvPrices=async function(medioId,btnEl){
     // 2) Crypto en batch (excluyendo posiciones líquidas)
     var cryptoSymbols=positions.filter(function(p){return p.subtipo==='Cripto'&&p.simbolo&&!p.liquid;}).map(function(p){return p.simbolo;});
     var cryptoPrices=cryptoSymbols.length?await fetchCryptoPrices(cryptoSymbols):{};
-    // 3) Stocks individuales (excluyendo líquidos)
-    for(var i=0;i<positions.length;i++){
-      var p=positions[i];
-      if(p.liquid) continue;
-      if(p.subtipo==='Acciones' && p.ticker){
-        var price=await fetchStockPrice(p.ticker);
-        if(price!==null && !isNaN(price)){
-          var oldV=valorPos(p);
-          p.precioActual=Math.round(price*10000)/10000;
-          if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p, oldV);
-          updated++;
-        } else { failed.push(p.ticker); }
-      } else if(p.subtipo==='Cripto' && p.simbolo){
-        var price2=cryptoPrices[p.simbolo.toUpperCase()];
-        if(typeof price2==='number'){
-          var oldV2=valorPos(p);
-          p.precioActual=Math.round(price2*100000000)/100000000;
-          if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p, oldV2);
-          updated++;
-        } else { failed.push(p.simbolo); }
-      }
-    }
+    // 3) Acciones EN PARALELO (antes era secuencial: N tickers × proxies × timeout
+    //    podía tardar minutos y parecer colgado). Ahora todas a la vez.
+    var stockPos=positions.filter(function(p){return !p.liquid && p.subtipo==='Acciones' && p.ticker;});
+    var stockPrices=await Promise.all(stockPos.map(function(p){ return fetchStockPrice(p.ticker); }));
+    stockPos.forEach(function(p,idx){
+      var price=stockPrices[idx];
+      if(price!==null && !isNaN(price)){
+        var oldV=valorPos(p);
+        p.precioActual=Math.round(price*10000)/10000;
+        if(Math.abs(valorPos(p)-oldV)>0.01) appendHistoriaPos(p, oldV);
+        updated++;
+      } else { failed.push(p.ticker); }
+    });
+    // 4) Cripto (ya viene en batch de un solo fetch)
+    positions.forEach(function(p){
+      if(p.liquid || p.subtipo!=='Cripto' || !p.simbolo) return;
+      var price2=cryptoPrices[p.simbolo.toUpperCase()];
+      if(typeof price2==='number'){
+        var oldV2=valorPos(p);
+        p.precioActual=Math.round(price2*100000000)/100000000;
+        if(Math.abs(valorPos(p)-oldV2)>0.01) appendHistoriaPos(p, oldV2);
+        updated++;
+      } else { failed.push(p.simbolo); }
+    });
     save(); renderInversion(); renderSaldos(); renderResumen();
     if(failed.length) toast('Actualizadas '+updated+' · sin datos: '+failed.join(', '), failed.length>updated);
     else toast('Actualizadas '+updated+' posiciones'+(rate?' (USD '+globalConfig.usdRate+')':''));
