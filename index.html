@@ -1096,6 +1096,10 @@ function totEgresosReales(){ return egresosBit().reduce(function(a,g){return a+g
 function realByFuente(){ var m={}; ingresosBit().forEach(function(g){m[g.cat]=(m[g.cat]||0)+g.monto;}); return m; }
 function totSubsMes(){ return subs.reduce(function(a,s){return a+(s.costo||0);},0); }
 function getMedio(n){ return medios.find(function(m){return m.nombre===n;})||null; }
+// Medios activos (no dados de baja). Se usa en vistas y selectores de NUEVAS
+// transacciones; las búsquedas por nombre/id (historial, bitácora) siguen
+// viendo TODOS los medios para no perder registros anteriores.
+function mediosActivos(){ return medios.filter(function(m){return !m.baja;}); }
 function medioColor(n){ var m=getMedio(n); return m?m.color:'#8b90a0'; }
 function medioIcono(n){ var m=getMedio(n); return m?(m.icono||'💳'):'💳'; }
 function catColor(n){ var c=cats.find(function(c){return c.nombre===n;}); return c?c.color:'#8b90a0'; }
@@ -1207,8 +1211,9 @@ function populateMediosSels(){
   ['eg-dest','bit-mp-sel'].forEach(function(id){
     var el=document.getElementById(id); if(!el) return;
     var cur=el.value;
-    el.innerHTML=medios.map(function(m){
-      return '<option value="'+esc(m.nombre)+'"'+(m.nombre===cur?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';
+    // Activos + el actualmente seleccionado (aunque esté de baja) para no invalidarlo.
+    el.innerHTML=medios.filter(function(m){return !m.baja || m.nombre===cur;}).map(function(m){
+      return '<option value="'+esc(m.nombre)+'"'+(m.nombre===cur?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+(m.baja?' (baja)':'')+'</option>';
     }).join('');
   });
 }
@@ -1349,7 +1354,7 @@ window.toggleQuickEntry=function(){
   document.getElementById('qe-fecha').value=defaultFechaForViewedMonth();
   // Medios
   var mpSel=document.getElementById('qe-mp');
-  mpSel.innerHTML=medios.map(function(m){return '<option value="'+esc(m.nombre)+'">'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
+  mpSel.innerHTML=mediosActivos().map(function(m){return '<option value="'+esc(m.nombre)+'">'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
   // Cat / Subcat
   syncQuickEntry();
   modal.classList.add('open');
@@ -1809,7 +1814,7 @@ function renderEgresos(){
     var gastadoVal=gastadoEgreso(e);
     var pct=e.presup>0?Math.round(gastadoVal/e.presup*100):0;
     var cls=pct>=100?'over':pct>=80?'warn':'';
-    var destOpts=medios.map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===e.dest?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+'</option>';}).join('');
+    var destOpts=medios.filter(function(m){return !m.baja || m.nombre===e.dest;}).map(function(m){return '<option value="'+esc(m.nombre)+'"'+(m.nombre===e.dest?' selected':'')+'>'+esc(m.icono||'💳')+' '+esc(m.nombre)+(m.baja?' (baja)':'')+'</option>';}).join('');
     var linked=!!e.linkedToSubs;
     var showLink=linked || (e.concepto||'').trim().toUpperCase()==='SUSCRIPCIONES';
     var linkBtn=showLink
@@ -2231,9 +2236,11 @@ window.delGasto=function(id){
 //  MEDIOS DE PAGO
 // ════════════════════════════════════════════════
 function renderMedios(){
-  document.getElementById('mp-count-badge').textContent=medios.length+' medios';
+  var activos=medios.filter(function(m){return !m.baja;});
+  var bajas=medios.filter(function(m){return m.baja;});
+  document.getElementById('mp-count-badge').textContent=activos.length+' medios'+(bajas.length?' · '+bajas.length+' de baja':'');
   var TIPOS=['Débito','Crédito','Efectivo','Digital','Apartado','Inversión'];
-  document.getElementById('mp-list').innerHTML=medios.map(function(m){
+  var html=activos.map(function(m){
     var tipoOpts=TIPOS.map(function(t){return '<option value="'+t+'"'+(t===m.tipo?' selected':'')+'>'+t+'</option>';}).join('');
     var lineaField = m.tipo==='Crédito'
       ? '<div style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:11px;color:var(--text3);padding-left:48px;flex-wrap:wrap">'+
@@ -2256,11 +2263,26 @@ function renderMedios(){
           '</div>'+
         '</div>'+
         '<input type="color" value="'+m.color+'" style="width:26px;height:26px;border:none;border-radius:4px;background:none;cursor:pointer;padding:0" title="Cambiar color" onchange="updMedio('+m.id+',\'color\',this.value)">'+
-        '<button class="btn-del" onclick="delMedio('+m.id+')">✕</button>'+
+        '<button class="btn-del" onclick="darBajaMedio('+m.id+')" title="Dar de baja: deja de aparecer, pero conserva el registro e historial">🚫</button>'+
+        '<button class="btn-del" onclick="delMedio('+m.id+')" title="Eliminar por completo">✕</button>'+
       '</div>'+
       lineaField+
     '</div>';
   }).join('');
+  if(bajas.length){
+    html+='<div style="margin:20px 0 8px;font-size:11px;font-weight:500;letter-spacing:0.05em;color:var(--text3);text-transform:uppercase">Dadas de baja</div>'+
+      '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">No aparecen en Saldos ni en los selectores, pero su registro e historial se conservan.</div>'+
+      bajas.map(function(m){
+        return '<div class="mp-card" style="opacity:0.55">'+
+          '<div class="mp-icon" style="background:'+m.color+'22;color:'+m.color+'">'+esc(m.icono||TIPO_ICONS[m.tipo]||'💳')+'</div>'+
+          '<div style="flex:1;min-width:0"><div style="font-weight:500;color:'+m.color+'">'+esc(m.nombre)+'</div>'+
+            '<div style="font-size:11px;color:var(--text3)">'+esc(m.tipo)+(m.fechaBaja?' · baja '+esc(m.fechaBaja):'')+'</div></div>'+
+          '<button class="btn" style="padding:4px 10px;font-size:11px;color:var(--green);border-color:rgba(31,209,150,0.3)" onclick="reactivarMedio('+m.id+')">Reactivar</button>'+
+          '<button class="btn-del" onclick="delMedio('+m.id+')" title="Eliminar por completo">✕</button>'+
+        '</div>';
+      }).join('');
+  }
+  document.getElementById('mp-list').innerHTML=html;
 }
 window.updMedio=function(id,f,v){
   var m=medios.find(function(m){return m.id===id;}); if(!m) return;
@@ -2292,7 +2314,28 @@ window.addMedio=function(){
   document.getElementById('mp-nombre').value=''; document.getElementById('mp-notas').value=''; document.getElementById('mp-icono').value='';
   save(); renderMedios(); populateMediosSels(); toast('Medio agregado');
 };
-window.delMedio=function(id){ medios=medios.filter(function(m){return m.id!==id;}); save(); renderMedios(); renderSaldos(); populateMediosSels(); toast('Eliminado'); };
+window.delMedio=function(id){
+  var m=medios.find(function(x){return x.id===id;});
+  var nombre=m?m.nombre:'';
+  var nGastos=(state.gastos||[]).filter(function(g){return g.mp===nombre;}).length;
+  var warn='¿Eliminar por completo este medio?';
+  if(nGastos>0) warn+='\n\n⚠️ Tiene '+nGastos+' movimiento(s) en la bitácora de este mes que quedarán sin medio asociado. Si solo quieres que deje de aparecer conservando el historial, usa "Dar de baja" (🚫).';
+  if(!confirm(warn)) return;
+  medios=medios.filter(function(x){return x.id!==id;}); save(); renderMedios(); renderSaldos(); populateMediosSels(); toast('Eliminado');
+};
+window.darBajaMedio=function(id){
+  var m=medios.find(function(x){return x.id===id;}); if(!m) return;
+  if(!confirm('¿Dar de baja "'+m.nombre+'"?\n\n• Deja de aparecer en Saldos y en los selectores de nuevas transacciones.\n• Se conservan todos los registros e historial anteriores.\n• Puedes reactivarla cuando quieras desde Configuración › Medios.')) return;
+  m.baja=true; m.fechaBaja=new Date().toISOString().slice(0,10);
+  save(); renderMedios(); renderSaldos(); renderResumen(); populateMediosSels();
+  toast('"'+m.nombre+'" dada de baja');
+};
+window.reactivarMedio=function(id){
+  var m=medios.find(function(x){return x.id===id;}); if(!m) return;
+  delete m.baja; delete m.fechaBaja;
+  save(); renderMedios(); renderSaldos(); renderResumen(); populateMediosSels();
+  toast('"'+m.nombre+'" reactivada');
+};
 
 // ════════════════════════════════════════════════
 //  INVERSIÓN
@@ -2903,7 +2946,7 @@ function liquidsInGroup(medioId, grupo, excludeId){
   return (m.posiciones||[]).filter(function(p){return p.liquid===true && (p.grupo||'').trim()===g && p.id!==excludeId;});
 }
 function debitableMedios(){
-  return medios.filter(function(m){return m.tipo==='Débito'||m.tipo==='Digital'||m.tipo==='Efectivo';});
+  return medios.filter(function(m){return !m.baja && (m.tipo==='Débito'||m.tipo==='Digital'||m.tipo==='Efectivo');});
 }
 window.toggleLiquid=function(medioId,posId){
   var m=medios.find(function(x){return x.id===medioId;}); if(!m) return;
@@ -4837,7 +4880,7 @@ function renderSaldos(){
   var mov=movByMp();
   var saldosIni=state.saldosIniciales||{};
   var totActivos=0, totDeuda=0, totLineaUsada=0, totLinea=0;
-  medios.forEach(function(m){
+  mediosActivos().forEach(function(m){
     var mv=mov[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0};
     if(m.tipo==='Crédito'){
       var deudaIni=saldosIni[m.nombre]||0;
@@ -4853,15 +4896,15 @@ function renderSaldos(){
   var neto=totActivos-totDeuda;
   var pctLinea=totLinea>0?Math.round(totLineaUsada/totLinea*100):0;
   var totInv=totalInversiones();
-  var liquidos=totActivos-medios.filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){var ini=saldosIni[m.nombre]||0; var mv=mov[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0}; return a+ini+mv.ing+(mv.trfIn||0)-mv.egr-(mv.trfOut||0);},0);
+  var liquidos=totActivos-mediosActivos().filter(function(m){return m.tipo==='Inversión';}).reduce(function(a,m){var ini=saldosIni[m.nombre]||0; var mv=mov[m.nombre]||{ing:0,egr:0,trfIn:0,trfOut:0}; return a+ini+mv.ing+(mv.trfIn||0)-mv.egr-(mv.trfOut||0);},0);
   var patrimonio=liquidos+totInv-totDeuda;
   document.getElementById('saldos-summary').innerHTML=
-    mc('Líquidos',fmt(liquidos),liquidos<0?'red':'green',medios.filter(function(m){return m.tipo!=='Crédito'&&m.tipo!=='Inversión';}).length+' cuentas')+
-    mc('Inversiones',fmt(totInv),'blue',medios.filter(function(m){return m.tipo==='Inversión';}).length+' activos')+
-    mc('Deuda total',fmt(totDeuda),totDeuda>0?'red':'',medios.filter(function(m){return m.tipo==='Crédito';}).length+' tarjetas')+
+    mc('Líquidos',fmt(liquidos),liquidos<0?'red':'green',mediosActivos().filter(function(m){return m.tipo!=='Crédito'&&m.tipo!=='Inversión';}).length+' cuentas')+
+    mc('Inversiones',fmt(totInv),'blue',mediosActivos().filter(function(m){return m.tipo==='Inversión';}).length+' activos')+
+    mc('Deuda total',fmt(totDeuda),totDeuda>0?'red':'',mediosActivos().filter(function(m){return m.tipo==='Crédito';}).length+' tarjetas')+
     mc('Patrimonio neto',fmt(patrimonio),patrimonio<0?'red':'green','líquidos + inversión − deuda');
 
-  var html=medios.map(function(m){
+  var html=mediosActivos().map(function(m){
     var mv=mov[m.nombre]||{ing:0,egr:0};
     var isCred=m.tipo==='Crédito';
     var creditExtra='';
@@ -4934,11 +4977,11 @@ function renderSaldos(){
     }
     var lblEgr=isCred?'+ Cargo':'+ Egreso';
     var lblIng=isCred?'+ Abono':'+ Ingreso';
-    var ptcBtn = !isCred && medios.some(function(x){return x.tipo==='Crédito';})
+    var ptcBtn = !isCred && mediosActivos().some(function(x){return x.tipo==='Crédito';})
       ? '<button class="btn" style="padding:5px 10px;font-size:11px;color:var(--blue);border-color:rgba(91,156,246,0.3)" onclick="togglePagarTC('+m.id+')">💳 Pagar TC</button>'
       : '';
     function _isValidTrfPos(p){ return p.liquid===true || p.subtipo==='PF' || p.subtipo==='TF' || p.subtipo==='RV'; }
-    var hasOtherMedioDestination=medios.some(function(x){
+    var hasOtherMedioDestination=mediosActivos().some(function(x){
       if(x.id===m.id) return false;
       if(x.tipo==='Inversión') return (x.posiciones||[]).some(_isValidTrfPos);
       return true;
@@ -4959,7 +5002,7 @@ function renderSaldos(){
       '</div>';
     var ptcForm='';
     if(!isCred){
-      var tcOpts=medios.filter(function(x){return x.tipo==='Crédito';}).map(function(x){
+      var tcOpts=mediosActivos().filter(function(x){return x.tipo==='Crédito';}).map(function(x){
         return '<option value="'+x.id+'">'+esc(x.icono||'💳')+' '+esc(x.nombre)+'</option>';
       }).join('');
       ptcForm='<div id="ptc-form-'+m.id+'" style="display:none;align-items:center;gap:6px;margin-top:8px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;flex-wrap:wrap">'+
@@ -4975,7 +5018,7 @@ function renderSaldos(){
       // Construir opciones de destino: para Inversión, una opción por posición válida.
       // Si la cuenta actual también es Inversión, incluye sus otras posiciones (no la misma).
       var trfOpts=[];
-      medios.forEach(function(x){
+      mediosActivos().forEach(function(x){
         // Si es la misma cuenta y NO es Inversión, no puede ser destino de sí misma
         if(x.id===m.id && m.tipo!=='Inversión') return;
         if(x.tipo==='Inversión'){
